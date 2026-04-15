@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+yt-dlp
+librosa
+numpy
+scipy
