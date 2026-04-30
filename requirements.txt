@@ -1,9 +1,13 @@
 fastapi
 uvicorn
-python-multipart
+pydantic
 librosa
-spleeter
+numpy
+scipy
+requests
 yt-dlp
+spleeter
+python-multipart
 celery
 redis
 sqlalchemy

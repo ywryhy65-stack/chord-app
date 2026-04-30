@@ -1983,56 +1983,19 @@
         }
         
         const data = await res.json();
-        
-        if (data.status === 'SUCCESS') {
-          loadSongData(data.result);
-          loadHistory();
-        } else if (data.status === 'PENDING') {
-          // Poll for status
-          pollTaskStatus(data.task_id);
-        }
+        loadSongData(data);
+        loadHistory(); // Refresh history sidebar
       } catch (err) {
         if (err && err.name === 'AbortError') {
           console.log('Analysis cancelled');
           return;
         }
         showError(err.message);
+      } finally {
+        analysisController = null;
         elements.analyzeBtn.disabled = false;
         showLoading(false);
       }
-    }
-
-    async function pollTaskStatus(taskId) {
-      const pollInterval = 3000; // 3 seconds
-      
-      const poll = async () => {
-        if (!analysisController) return; // Stopped
-        
-        try {
-          const res = await fetch(`/status/${taskId}`, { signal: analysisController.signal });
-          if (!res.ok) throw new Error('Status check failed');
-          
-          const data = await res.json();
-          if (data.status === 'SUCCESS') {
-            loadSongData(data.result);
-            loadHistory();
-            elements.analyzeBtn.disabled = false;
-            showLoading(false);
-          } else if (data.status === 'FAILURE') {
-            throw new Error(data.error || 'Analysis task failed');
-          } else {
-            // Still pending, poll again
-            setTimeout(poll, pollInterval);
-          }
-        } catch (err) {
-          if (err && err.name === 'AbortError') return;
-          showError(err.message);
-          elements.analyzeBtn.disabled = false;
-          showLoading(false);
-        }
-      };
-      
-      setTimeout(poll, pollInterval);
     }
 
     function cancelAnalysis() {
