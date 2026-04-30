@@ -1,10 +1,10 @@
 fastapi
 uvicorn
-pydantic
-librosa
-numpy
-scipy
-requests
-yt-dlp
-spleeter
 python-multipart
+librosa
+spleeter
+yt-dlp
+celery
+redis
+sqlalchemy
+jinja2

@@ -24,6 +24,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
+from celery_app import celery_app
+from tasks import analyze_chords_task
+from celery.result import AsyncResult
 
 
 # Force IPv4 for requests
@@ -839,7 +842,7 @@ def _fetch_synced_lyrics(youtube_title: str, artist: Optional[str] = None, track
 
 
 @app.post("/analyze")
-async def analyze_chords(payload: AnalyzeRequest, request: Request):
+async def analyze_chords(payload: AnalyzeRequest):
     raw_input = payload.search_or_url.strip()
     youtube_watch_url, video_id = resolve_input_to_youtube(raw_input)
 
@@ -849,105 +852,33 @@ async def analyze_chords(payload: AnalyzeRequest, request: Request):
     if cache_json.exists():
         try:
             with open(cache_json, "r") as f:
-                return json.load(f)
+                return {"status": "SUCCESS", "result": json.load(f)}
         except Exception:
             pass
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        wav_stem = tmp_path / "audio"
-        wav_file = tmp_path / "audio.wav"
+    # 2. Trigger Celery Task
+    task = analyze_chords_task.delay(youtube_watch_url, video_id, raw_input)
+    return {"status": "PENDING", "task_id": task.id}
 
-        artist = None
-        track = None
-        video_duration = None
-        # Fetch title using Python API
-        try:
-            ydl_opts = {
-                "quiet": True,
-                "socket_timeout": 30,
-                "source_address": "0.0.0.0", # Force IPv4
-                "retries": 5,
-                "extractor_retries": 3,
-                "remote_components": ["ejs:github"],
-            }
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(youtube_watch_url, download=False)
-                title = info.get("title", "Unknown Title")
-                artist = info.get("artist")
-                track = info.get("track")
-                video_duration = info.get("duration")
-        except Exception as exc:
-            print(f"DEBUG: yt-dlp metadata fetch failed: {exc}")
-            title = "Unknown Title"
 
-        last_stderr = _download_audio(youtube_watch_url, wav_stem)
-        
-        # Directory Inspection
-        dir_contents = os.listdir(tmp_dir)
-        print(f"DEBUG: Temp directory contents: {dir_contents}")
-
-        if not wav_file.exists():
-            candidates = list(tmp_path.glob("audio.*"))
-            if not candidates:
-                raise HTTPException(
-                    status_code=500, 
-                    detail=f"Downloaded audio file not found in {tmp_dir}. contents: {dir_contents}. yt-dlp stderr: {last_stderr}"
-                )
-            wav_file = candidates[0]
-
-        # Cancellation checkpoint: after download.
-        if await request.is_disconnected():
-            try:
-                if wav_file.exists():
-                    wav_file.unlink()
-            except Exception:
-                pass
-            raise HTTPException(status_code=499, detail="Client disconnected during download")
-
-        # Cancellation checkpoint: right before expensive chord estimation.
-        if await request.is_disconnected():
-            try:
-                if wav_file.exists():
-                    wav_file.unlink()
-            except Exception:
-                pass
-            raise HTTPException(status_code=499, detail="Client disconnected before analysis")
-
-        try:
-            chords = _estimate_chords(wav_file)
-        except Exception as exc:
-            print("--- CHORD ANALYSIS FAILED ---")
-            traceback.print_exc()
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        if await request.is_disconnected():
-            raise HTTPException(status_code=499, detail="Client disconnected during analysis")
-
-        # Fetch synced lyrics
-        synced_lyrics = _fetch_synced_lyrics(title, artist=artist, track=track, video_duration=video_duration)
-
-        result = {
-            "title": title,
-            "source_url": raw_input,
-            "video_id": video_id,
-            "chords": chords,
-            "lyrics": synced_lyrics,
+@app.get("/status/{task_id}")
+async def get_task_status(task_id: str):
+    task_result = AsyncResult(task_id, app=celery_app)
+    
+    if task_result.status == "SUCCESS":
+        return {
+            "status": "SUCCESS",
+            "result": task_result.result
         }
-
-        # Save to cache only after full analysis completes and client is still connected.
-        try:
-            cached_wav = AUDIO_CACHE_DIR / f"{video_id}.wav"
-            shutil.copy2(wav_file, cached_wav)
-            with open(cache_json, "w") as f:
-                json.dump(result, f)
-        except Exception:
-            pass
-
-    # 3. Cleanup old audio (keep only the 3 newest .wav files)
-    _cleanup_old_audio(3)
-
-    return result
+    elif task_result.status == "FAILURE":
+        return {
+            "status": "FAILURE",
+            "error": str(task_result.info)
+        }
+    else:
+        return {
+            "status": "PENDING"
+        }
 
 
 @app.get("/health")
