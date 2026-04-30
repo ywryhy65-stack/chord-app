@@ -1,0 +1,2945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ChordSync - AI Chord Extraction</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --background: #060e17; /* Even Deeper Ocean */
+      --foreground: #f0f9ff;
+      --card: rgba(19, 47, 76, 0.4); /* Glassy Navy */
+      --card-foreground: #f0f9ff;
+      --muted: rgba(30, 73, 118, 0.3);
+      --muted-foreground: #94a3b8;
+      --primary: #0ea5e9;
+      --primary-foreground: #ffffff;
+      --secondary: #38bdf8;
+      --secondary-foreground: #ffffff;
+      --accent: #7dd3fc;
+      --accent-foreground: #0c4a6e;
+      --border: rgba(255, 255, 255, 0.08);
+      --ring: #0284c7;
+      --radius: 16px;
+      --sidebar-width: 320px;
+      --mobile-header-height: 72px;
+      --header-height: 180px;
+      
+      /* Neon Glows */
+      --glow-blue: 0 0 20px rgba(14, 165, 233, 0.3);
+      --glow-cyan: 0 0 25px rgba(56, 189, 248, 0.4);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      /* Smooth scrolling for the whole app */
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at top right, #0c4a6e, #060e17 60%);
+      color: var(--foreground);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      line-height: 1.5;
+    }
+
+    /* Modern Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--muted);
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--ring);
+    }
+
+    /* Mobile Header */
+    .mobile-header {
+      display: none;
+      height: var(--mobile-header-height);
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1rem;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      backdrop-filter: blur(10px);
+    }
+
+    .mobile-logo {
+      font-weight: 800;
+      font-size: 1.25rem;
+      background: linear-gradient(135deg, var(--secondary), var(--ring));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .drawer-toggle {
+      background: var(--muted);
+      border: 1px solid var(--border);
+      color: var(--foreground);
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      :root {
+        --mobile-header-height: 60px;
+        --header-height: 150px;
+      }
+
+      body {
+        flex-direction: column;
+        height: auto;
+        overflow: auto;
+      }
+
+      .mobile-header {
+        display: flex;
+      }
+
+      .sidebar {
+        position: fixed;
+        left: -100%;
+        top: 0;
+        bottom: 0;
+        width: 280px !important;
+        height: 100% !important;
+        z-index: 2000;
+        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 20px 0 50px rgba(0,0,0,0.5);
+      }
+
+      .sidebar.open {
+        left: 0;
+      }
+
+      .sidebar-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        backdrop-filter: blur(4px);
+        z-index: 1999;
+      }
+
+      .sidebar-overlay.visible {
+        display: block;
+      }
+
+      .main-content {
+        padding: 1rem !important;
+        height: auto !important;
+        overflow: visible !important;
+        padding-bottom: 1.5rem !important;
+      }
+
+      .controls-container {
+        position: relative !important;
+        top: 0 !important;
+        flex-direction: column;
+        align-items: stretch !important;
+        gap: 0.6rem;
+        padding: 0.75rem !important;
+        background: transparent !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+
+      .player-section {
+        margin-bottom: 1rem !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+
+      .transpose-bar {
+        width: 100% !important;
+        justify-content: space-between;
+        padding: 0.6rem 0.75rem !important;
+      }
+
+      .chord-grid {
+        grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)) !important;
+        gap: 0.5rem !important;
+        padding-top: 0.75rem !important;
+      }
+
+      .transpose-controls {
+        gap: 0.45rem !important;
+        flex-wrap: wrap;
+      }
+
+      .inst-btn {
+        padding: 0.5rem 0.75rem !important;
+        font-size: 0.8rem !important;
+      }
+
+      .btn-transpose {
+        width: 34px !important;
+        height: 34px !important;
+        font-size: 1rem !important;
+      }
+
+      .btn-reset {
+        margin-left: 0 !important;
+        padding: 0.5rem 0.6rem !important;
+        font-size: 0.72rem !important;
+      }
+
+      .tone-display {
+        min-width: 48px !important;
+        font-size: 0.85rem !important;
+      }
+
+      .capo-display {
+        font-size: 0.7rem !important;
+      }
+
+      .chord-card {
+        padding: 0.85rem 0.45rem !important;
+      }
+
+      .chord-name {
+        font-size: 1.15rem !important;
+      }
+
+      .chord-time {
+        font-size: 0.68rem !important;
+      }
+
+      .search-box {
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.75rem !important;
+      }
+
+      .search-btn {
+        width: 100%;
+      }
+
+      .chord-tooltip {
+        max-width: 220px !important;
+      }
+
+      #guitarChart svg {
+        width: 140px !important;
+      }
+
+      .piano-svg {
+        width: 160px !important;
+        height: 48px !important;
+      }
+
+      .loading-card {
+        padding: 1.5rem 2rem !important;
+        width: 90%;
+        max-width: 320px;
+      }
+
+      .equalizer {
+        height: 40px !important;
+      }
+
+      @keyframes equalize {
+        0%   { height: 8px; opacity: 0.6; }
+        30%  { height: 24px; }
+        60%  { height: 14px; }
+        100% { height: 40px; opacity: 1; }
+      }
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--card);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-bottom: 0.5rem;
+      position: relative;
+      group: hover;
+    }
+
+    .history-item:hover {
+      background: var(--muted);
+    }
+
+    .delete-btn {
+      position: absolute;
+      right: 0.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: #ef444422;
+      color: #ef4444;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      opacity: 0;
+      transition: all 0.2s;
+      z-index: 10;
+    }
+
+    .history-item:hover .delete-btn {
+      opacity: 1;
+    }
+
+    .delete-btn:hover {
+      background: #ef4444;
+      color: white;
+    }
+
+    .history-item.active {
+      background: var(--primary);
+      color: white;
+      border: 1px solid var(--accent);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .history-thumb {
+      width: 48px;
+      height: 48px;
+      background: var(--muted);
+      border-radius: 4px;
+      object-fit: cover;
+    }
+
+    .history-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .history-name {
+      font-size: 0.875rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 0 0 1.5rem 0;
+      scroll-padding-top: 240px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 0 2rem; /* Added padding here instead */
+    }
+
+    /* Search Header */
+    .search-section {
+      margin-top: 2rem;
+      margin-bottom: 2rem;
+      position: relative;
+      z-index: 1500;
+    }
+
+    .search-box {
+      display: flex;
+      gap: 1rem;
+      background: var(--card);
+      padding: 0.5rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+      position: relative;
+      z-index: 1501;
+      transition: box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    .search-box:focus-within {
+      border-color: var(--secondary);
+      box-shadow: 0 0 0 3px var(--glow-primary), 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Suggestions Dropdown */
+    .suggestions-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+      margin-top: -4px;
+      padding: 0.5rem 0;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      z-index: 1500;
+      display: none;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .suggestion-item {
+      padding: 0.75rem 1.5rem;
+      cursor: pointer;
+      font-size: 0.9375rem;
+      color: var(--foreground);
+      transition: background 0.2s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .suggestion-item:hover {
+      background: var(--muted);
+      color: var(--accent);
+    }
+
+    .search-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--foreground);
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      outline: none;
+      transition: color 0.2s;
+    }
+
+    .search-input::placeholder {
+      color: var(--muted-foreground);
+      transition: color 0.2s;
+    }
+
+    .search-box:focus-within .search-input::placeholder {
+      color: #6bbf96;
+    }
+
+    .search-btn {
+      background: linear-gradient(135deg, var(--secondary), var(--primary));
+      color: var(--primary-foreground);
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, box-shadow 0.2s, transform 0.15s;
+      box-shadow: 0 2px 12px var(--glow-primary);
+    }
+
+    .search-btn:hover:not(:disabled) {
+      box-shadow: 0 4px 20px var(--glow-accent);
+      transform: translateY(-1px);
+    }
+
+    .search-btn:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+
+    .search-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Player Section */
+    .player-section {
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .player-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      gap: 1rem;
+    }
+
+    .playback-speed-container {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--muted);
+      padding: 0.25rem 0.5rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .playback-speed-container label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+    }
+
+    .speed-select {
+      background: transparent;
+      border: none;
+      color: var(--foreground);
+      font-size: 0.875rem;
+      font-weight: 700;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .visualizer-container {
+      width: 100%;
+      height: 40px;
+      margin-bottom: 1rem;
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    #visualizerCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Sticky Player Bar */
+    .app-header-sticky {
+      position: sticky;
+      top: 0;
+      background: rgba(6, 14, 23, 0.4);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 1400;
+      width: 100%;
+      min-height: var(--header-height);
+      padding: 1.5rem 0 1rem 0;
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 18px 40px -10px rgba(0, 0, 0, 0.8);
+      margin-bottom: 2.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .app-header-sticky {
+        top: 0;
+        padding: 1rem 0 0.75rem 0;
+        box-shadow: 0 12px 24px -8px rgba(0,0,0,0.7);
+        margin-bottom: 1.5rem;
+        background: rgba(6, 14, 23, 0.4) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border-bottom: 1px solid var(--border) !important;
+      }
+    }
+
+    .song-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+
+    audio {
+      width: 100%;
+      height: 40px;
+      border-radius: 8px;
+      filter: invert(90%) hue-rotate(100deg) brightness(1.1);
+    }
+
+    /* Transpose Controls */
+    .transpose-bar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0;
+      padding: 0.75rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: fit-content;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Controls container (Instrument selector + Transpose) */
+    .controls-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(12px);
+      transition: all 0.3s ease;
+    }
+
+    .instrument-selector {
+      display: inline-flex;
+      gap: 0.5rem;
+      padding: 0.25rem;
+      border-radius: 12px;
+      background: var(--muted);
+    }
+
+    .inst-btn {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted-foreground);
+      padding: 0.6rem 1.2rem;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .inst-btn:hover {
+      color: var(--foreground);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .inst-btn.active {
+      color: var(--primary-foreground);
+      background: var(--primary);
+      box-shadow: var(--glow-blue);
+      transform: translateY(-1px);
+    }
+
+    .inst-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+
+    @media (max-width: 640px) {
+      .controls-container {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .transpose-bar {
+        width: 100%;
+        justify-content: space-between;
+      }
+    }
+
+    @media (max-width: 600px) {
+      :root {
+        --mobile-header-height: 52px;
+        --header-height: 108px;
+      }
+
+      .app-header-sticky {
+        padding: 0.35rem 0 0.35rem 0;
+        margin-bottom: 0.6rem;
+        min-height: var(--header-height);
+        background: rgba(6, 14, 23, 0.4) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border-bottom: 1px solid var(--border) !important;
+      }
+
+      .player-section {
+        padding: 0.5rem 0.65rem;
+        margin-bottom: 0.45rem;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+
+      .player-top {
+        margin-bottom: 0.35rem;
+      }
+
+      .song-title {
+        display: none;
+      }
+
+      .playback-speed-container {
+        margin-left: auto;
+        padding: 0.2rem 0.35rem;
+      }
+
+      .playback-speed-container label {
+        display: none;
+      }
+
+      .speed-select {
+        font-size: 0.75rem;
+      }
+
+      .visualizer-container {
+        display: none;
+      }
+
+      audio {
+        height: 30px;
+      }
+
+      .controls-container {
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between;
+        gap: 0.45rem;
+        padding: 0.4rem 0.5rem !important;
+        flex-wrap: wrap;
+        background: transparent !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+
+      .instrument-selector {
+        gap: 0.25rem;
+        padding: 0.15rem;
+      }
+
+      .inst-btn {
+        padding: 0.3rem 0.45rem !important;
+        font-size: 0.72rem !important;
+      }
+
+      .transpose-bar {
+        width: auto !important;
+        padding: 0.35rem 0.45rem !important;
+        gap: 0.4rem;
+      }
+
+      .transpose-label {
+        display: none;
+      }
+
+      .transpose-controls {
+        gap: 0.25rem !important;
+        flex-wrap: wrap;
+      }
+
+      .btn-transpose {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 0.9rem !important;
+      }
+
+      .btn-reset {
+        padding: 0.3rem 0.45rem !important;
+        font-size: 0.66rem !important;
+      }
+
+      .tone-display {
+        min-width: 36px !important;
+        font-size: 0.74rem !important;
+      }
+
+      .capo-display {
+        font-size: 0.62rem !important;
+      }
+
+      .main-content {
+        scroll-padding-top: 200px;
+      }
+
+      .chord-grid {
+        padding-top: 0.45rem !important;
+        gap: 0.45rem !important;
+        scroll-padding-top: 200px;
+      }
+
+      .chord-card {
+        scroll-margin-top: 200px;
+      }
+    }
+
+    .transpose-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .transpose-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .btn-transpose {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--secondary);
+      color: var(--foreground);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1.1rem;
+      font-weight: 600;
+      transition: background 0.2s, border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+    }
+
+    .btn-transpose:hover {
+      background: var(--primary);
+      border-color: var(--ring);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px var(--glow-primary);
+    }
+
+    .btn-transpose:active {
+      transform: scale(0.95);
+      box-shadow: none;
+    }
+
+    .btn-reset {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.4rem 0.75rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-left: 0.5rem;
+    }
+
+    .btn-reset:hover {
+      color: var(--foreground);
+      border-color: var(--muted-foreground);
+    }
+
+    .btn-reset:active {
+      transform: scale(0.95);
+    }
+
+    .tone-display {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      min-width: 60px;
+      text-align: center;
+      color: var(--ring);
+    }
+
+    .capo-display {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--muted-foreground);
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      display: none;
+    }
+
+    /* Error Message */
+    .error-toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #ef4444;
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      display: none;
+      z-index: 3000;
+      animation: slideUp 0.3s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* Chord Grid */
+    .chord-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 1rem;
+      padding-top: 0.75rem;
+      padding-bottom: 4rem;
+      scroll-padding-top: 240px;
+    }
+
+    .welcome-title {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 480px) {
+      .welcome-title {
+        font-size: 2rem;
+      }
+      .welcome-title + p {
+        font-size: 1rem !important;
+      }
+    }
+
+    /* Chord tooltip (global, positioned with Floating UI) */
+    .chord-tooltip {
+      position: fixed;
+      top: 0;
+      left: 0;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(6px) scale(0.98);
+      transform-origin: 50% 100%;
+      transition: opacity 0.16s ease, visibility 0.16s ease, transform 0.16s ease;
+      z-index: 5000;
+      pointer-events: none;
+      background: #ffffff;
+      color: #0b1220;
+      border-radius: 14px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+      border: 1px solid rgba(2, 6, 23, 0.08);
+      max-width: min(260px, calc(100vw - 16px));
+    }
+
+    .chord-tooltip.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
+    }
+
+    .chord-tooltip-inner {
+      padding: 10px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .tooltip-title {
+      width: 100%;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tooltip-chord {
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      font-size: 0.95rem;
+    }
+
+    .tooltip-inst {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: rgba(2, 6, 23, 0.6);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .tooltip-fallback {
+      margin: 0;
+      padding: 8px 10px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: rgba(2, 6, 23, 0.7);
+      background: rgba(2, 6, 23, 0.04);
+      border: 1px dashed rgba(2, 6, 23, 0.18);
+      border-radius: 12px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .tooltip-diagram {
+      display: grid;
+      place-items: center;
+      width: 100%;
+    }
+
+    .tooltip-diagram svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .guitar-diagram {
+      min-width: 100px;
+      min-height: 140px;
+      display: grid;
+      place-items: center;
+    }
+
+    #guitarChart svg {
+      width: 180px;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+
+    .piano-svg {
+      width: 200px;
+      height: 60px;
+      display: block;
+    }
+
+    .piano-white { fill: #ffffff; stroke: rgba(2, 6, 23, 0.18); stroke-width: 1; }
+    .piano-black { fill: #0b1220; }
+    .piano-on-white { fill: rgba(56, 189, 248, 0.55); }
+    .piano-on-black { fill: rgba(56, 189, 248, 0.85); }
+
+    /* Staggered entrance animation */
+    @keyframes chordEntrance {
+      from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.96);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .chord-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      scroll-margin-top: 240px;
+      
+      /* Entrance animation */
+      opacity: 0;
+      animation: chordEntrance 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+
+    .chord-card:hover {
+      transform: translateY(-4px) scale(1.02);
+      border-color: var(--secondary);
+      box-shadow: var(--glow-cyan);
+      background: rgba(19, 47, 76, 0.6);
+    }
+
+    .chord-card.medium {
+      background: rgba(19, 47, 76, 0.6);
+      border-color: rgba(19, 47, 76, 0.6);
+    }
+
+    .chord-card.fast {
+      background: rgba(251, 191, 36, 0.12);
+      border-color: rgba(251, 191, 36, 0.12);
+    }
+
+    .chord-card.ultra-fast {
+      background: rgba(248, 113, 113, 0.14);
+      border-color: rgba(248, 113, 113, 0.14);
+    }
+
+    .chord-card.active {
+      background: linear-gradient(135deg, var(--primary), var(--ring));
+      border-color: var(--accent);
+      box-shadow: var(--glow-blue);
+      transform: scale(1.05);
+      z-index: 10;
+    }
+
+    .chord-card.ultra-fast.active,
+    .chord-card.fast.active,
+    .chord-card.medium.active {
+      background: linear-gradient(135deg, var(--primary), var(--ring));
+      border-color: var(--accent);
+      box-shadow: var(--glow-blue);
+    }
+
+    .chord-card.active .chord-name {
+      color: #ffffff;
+      text-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+    }
+
+    .chord-name {
+      font-size: 1.75rem;
+      font-weight: 800;
+      z-index: 2;
+      transition: all 0.2s ease;
+      letter-spacing: -0.02em;
+      color: var(--foreground);
+    }
+
+    .chord-time {
+      font-size: 0.8rem;
+      color: var(--muted-foreground);
+      margin-top: 0.25rem;
+      font-weight: 600;
+      z-index: 2;
+    }
+
+    .chord-progress {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.1);
+      width: 0%;
+      z-index: 1;
+      border-radius: inherit;
+      pointer-events: none;
+      transition: width 0.1s linear;
+    }
+
+    .chord-card.active .chord-progress {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* =========================================
+       LOADING OVERLAY — complete redesign
+       ========================================= */
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 38%, rgba(14, 165, 233, 0.14), transparent 55%),
+        rgba(2, 8, 20, 0.76);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 2000;
+      backdrop-filter: blur(16px) saturate(1.45);
+      -webkit-backdrop-filter: blur(16px) saturate(1.45);
+      opacity: 0;
+      transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    /* Fade-in when shown */
+    .loading-overlay.visible {
+      opacity: 1;
+    }
+
+    /* Glassmorphism card containing the animation */
+    .loading-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.45rem;
+      min-width: min(92vw, 460px);
+      padding: 2.25rem 2.6rem;
+      background: linear-gradient(145deg, rgba(13, 29, 49, 0.62), rgba(8, 20, 38, 0.52));
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 20px;
+      box-shadow:
+        0 18px 46px rgba(0, 0, 0, 0.54),
+        0 0 0 1px rgba(125, 211, 252, 0.12) inset;
+      backdrop-filter: blur(18px) saturate(1.35);
+      -webkit-backdrop-filter: blur(18px) saturate(1.35);
+      overflow: hidden;
+    }
+
+    .loading-card::before {
+      content: "";
+      position: absolute;
+      inset: -22px;
+      background:
+        radial-gradient(circle at 50% 45%, rgba(34, 211, 238, 0.34), rgba(30, 64, 175, 0.12) 52%, transparent 70%);
+      filter: blur(14px);
+      z-index: -1;
+      animation: loadingAura 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      pointer-events: none;
+    }
+
+    .loading-card::after {
+      content: "";
+      position: absolute;
+      left: 9%;
+      right: 9%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.95), rgba(14, 165, 233, 0.95), transparent);
+      box-shadow: 0 0 12px rgba(34, 211, 238, 0.65);
+      border-radius: 2px;
+      animation: loadingScan 3.4s cubic-bezier(0.25, 0.8, 0.25, 1) infinite;
+      pointer-events: none;
+      opacity: 0.8;
+    }
+
+    /* Audio Equalizer bars (12 semitones) */
+    .equalizer {
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      height: 62px;
+      padding: 0.2rem 0.2rem 0.1rem;
+      z-index: 1;
+    }
+
+    .eq-bar {
+      width: 8px;
+      border-radius: 4px 4px 2px 2px;
+      background: linear-gradient(to top, #22d3ee, #0ea5e9 52%, #1d4ed8);
+      box-shadow: 0 0 11px rgba(56, 189, 248, 0.55), 0 0 24px rgba(29, 78, 216, 0.44);
+      animation: equalize 1.35s cubic-bezier(0.33, 1, 0.68, 1) infinite alternate;
+      transform-origin: bottom center;
+    }
+
+    .eq-bar:nth-child(1) { animation-delay: 0.02s; animation-duration: 1.02s; }
+    .eq-bar:nth-child(2) { animation-delay: 0.11s; animation-duration: 1.26s; }
+    .eq-bar:nth-child(3) { animation-delay: 0.04s; animation-duration: 1.48s; }
+    .eq-bar:nth-child(4) { animation-delay: 0.21s; animation-duration: 1.16s; }
+    .eq-bar:nth-child(5) { animation-delay: 0.08s; animation-duration: 1.34s; }
+    .eq-bar:nth-child(6) { animation-delay: 0.17s; animation-duration: 1.54s; }
+    .eq-bar:nth-child(7) { animation-delay: 0.13s; animation-duration: 1.22s; }
+    .eq-bar:nth-child(8) { animation-delay: 0.26s; animation-duration: 1.44s; }
+    .eq-bar:nth-child(9) { animation-delay: 0.07s; animation-duration: 1.1s; }
+    .eq-bar:nth-child(10) { animation-delay: 0.18s; animation-duration: 1.38s; }
+    .eq-bar:nth-child(11) { animation-delay: 0.03s; animation-duration: 1.58s; }
+    .eq-bar:nth-child(12) { animation-delay: 0.22s; animation-duration: 1.2s; }
+
+    @keyframes equalize {
+      0%   { height: 11px; opacity: 0.5; }
+      28%  { height: 36px; opacity: 0.78; }
+      57%  { height: 22px; opacity: 0.66; }
+      100% { height: 60px; opacity: 1; }
+    }
+
+    @keyframes loadingAura {
+      0%, 100% {
+        transform: scale(0.96);
+        opacity: 0.62;
+      }
+      50% {
+        transform: scale(1.03);
+        opacity: 0.95;
+      }
+    }
+
+    @keyframes loadingScan {
+      0% {
+        top: 17%;
+        opacity: 0.5;
+      }
+      50% {
+        top: 79%;
+        opacity: 0.95;
+      }
+      100% {
+        top: 17%;
+        opacity: 0.5;
+      }
+    }
+
+    .loading-overlay p {
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: #7dd3fc;
+      letter-spacing: 0.03em;
+      text-align: center;
+      text-shadow: 0 0 22px rgba(34, 211, 238, 0.38);
+      min-height: 1.5rem;
+      transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .loading-cancel-btn {
+      appearance: none;
+      background: rgba(14, 23, 40, 0.36);
+      color: rgba(224, 242, 254, 0.96);
+      border: 1px solid rgba(125, 211, 252, 0.42);
+      border-radius: 10px;
+      padding: 0.55rem 1.05rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: border-color 0.26s cubic-bezier(0.22, 1, 0.36, 1), color 0.26s cubic-bezier(0.22, 1, 0.36, 1), background 0.26s cubic-bezier(0.22, 1, 0.36, 1), transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .loading-cancel-btn:hover {
+      border-color: rgba(125, 211, 252, 0.78);
+      color: #ffffff;
+      background: rgba(34, 211, 238, 0.12);
+      box-shadow: 0 0 18px rgba(14, 165, 233, 0.24);
+    }
+
+    .loading-cancel-btn:active {
+      transform: scale(0.98);
+    }
+
+    .loading-cancel-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .history-search-container {
+      padding: 0 1rem 1rem 1rem;
+    }
+
+    .history-search-input {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--muted);
+      color: var(--foreground);
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .history-search-input:focus {
+      border-color: var(--ring);
+    }
+
+    button,
+    .search-btn,
+    .drawer-toggle,
+    .inst-btn,
+    .btn-transpose,
+    .btn-reset,
+    .loading-cancel-btn {
+      min-width: 44px;
+      min-height: 44px;
+    }
+    /* Floating Karaoke Subtitle Bar */
+    .active-lyric-bar {
+      text-align: center;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--primary);
+      text-shadow: 0 0 12px rgba(14, 165, 233, 0.35), 0 1px 3px rgba(0, 0, 0, 0.5);
+      min-height: 2rem;
+      padding: 0.35rem 1rem 0.45rem;
+      transition: opacity 0.3s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .active-lyric-bar.faded {
+      opacity: 0;
+    }
+
+    @media (max-width: 768px) {
+      .active-lyric-bar {
+        font-size: 1rem;
+        min-height: 1.6rem;
+        padding: 0.25rem 0.75rem 0.35rem;
+      }
+    }
+
+    /* Manual Sync Studio */
+    #manualSyncContainer {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      margin-top: 2rem;
+      text-align: center;
+      display: none;
+    }
+
+    #rawLyricsInput {
+      width: 100%;
+      min-height: 150px;
+      background: var(--card);
+      color: var(--foreground);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: inherit;
+      font-size: 1rem;
+      margin-bottom: 1.5rem;
+      resize: vertical;
+    }
+
+    #startSyncBtn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.75rem 2rem;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    #startSyncBtn:hover {
+      background: var(--secondary);
+      transform: translateY(-2px);
+    }
+
+    #syncingOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 8, 20, 0.95);
+      z-index: 3000;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      text-align: center;
+      backdrop-filter: blur(10px);
+    }
+
+    .sync-instruction {
+      font-size: 1.25rem;
+      color: var(--muted-foreground);
+      margin-bottom: 2rem;
+    }
+
+    #nextLineDisplay {
+      font-size: 3rem;
+      font-weight: 800;
+      color: var(--primary);
+      text-shadow: 0 0 30px rgba(14, 165, 233, 0.4);
+      max-width: 800px;
+      line-height: 1.2;
+    }
+
+    .sync-progress-info {
+      position: absolute;
+      bottom: 3rem;
+      font-size: 1rem;
+      color: var(--muted-foreground);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="mobile-header">
+    <div class="mobile-logo">ChordSync</div>
+    <button class="drawer-toggle" id="drawerToggle">History</button>
+  </div>
+
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h2 class="sidebar-title">Analysis History</h2>
+    </div>
+    <div class="history-search-container">
+      <input type="text" id="historySearchInput" class="history-search-input" placeholder="Search history..." autocomplete="off">
+    </div>
+    <div class="history-list" id="historyList">
+      <!-- History items injected here -->
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <section class="search-section">
+      <div class="container">
+        <div class="search-box">
+          <input type="text" id="searchInput" class="search-input" placeholder="Paste YouTube link or song name..." autocomplete="off">
+          <button id="analyzeBtn" class="search-btn">Sync & Analyze</button>
+        </div>
+        <div id="suggestionsDropdown" class="suggestions-dropdown"></div>
+      </div>
+    </section>
+
+    <div id="appUI" style="display: none;">
+      <div class="app-header-sticky">
+        <div class="container">
+          <section class="player-section">
+            <div class="player-top">
+              <h2 class="song-title" id="displayTitle">Song Title</h2>
+              <div class="playback-speed-container">
+                <label for="speedSelect">Speed</label>
+                <select id="speedSelect" class="speed-select">
+                  <option value="0.5">0.5x</option>
+                  <option value="0.75">0.75x</option>
+                  <option value="1.0" selected>1.0x</option>
+                  <option value="1.25">1.25x</option>
+                  <option value="1.5">1.5x</option>
+                </select>
+              </div>
+            </div>
+            <div class="visualizer-container">
+              <canvas id="visualizerCanvas"></canvas>
+            </div>
+            <audio id="audioPlayer" controls></audio>
+          </section>
+
+          <div class="controls-container">
+            <div class="instrument-selector">
+              <button class="inst-btn active" data-inst="guitar">🎸 Guitar</button>
+              <button class="inst-btn" data-inst="piano">🎹 Piano</button>
+            </div>
+
+            <div class="transpose-bar">
+              <span class="transpose-label">Transpose</span>
+              <div class="transpose-controls">
+                <button class="btn-transpose" id="transposeDown" title="Lower half-step">−</button>
+                <span class="tone-display" id="toneValue">0</span>
+                <button class="btn-transpose" id="transposeUp" title="Raise half-step">+</button>
+                <button class="btn-reset" id="transposeReset">Reset</button>
+                <span class="capo-display" id="capoValue">Capo: 0</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="active-lyric-bar" class="active-lyric-bar"></div>
+        </div>
+      </div>
+
+      <div class="container">
+        <div class="chord-grid" id="chordGrid">
+          <!-- Chords injected here -->
+        </div>
+
+        <!-- Manual Sync Studio -->
+        <div id="manualSyncContainer">
+          <h3 style="margin-bottom: 1rem; color: var(--secondary);">Lyrics Not Found</h3>
+          <p style="margin-bottom: 1.5rem; color: var(--muted-foreground);">We couldn't find synchronized lyrics for this song. You can sync them manually!</p>
+          <textarea id="rawLyricsInput" placeholder="Paste raw lyrics here (one line per tap)..."></textarea>
+          <button id="startSyncBtn">Start Syncing</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="welcomeUI" style="text-align: center; padding: 5rem 1rem;">
+      <div class="container">
+        <h1 class="welcome-title">ChordSync</h1>
+        <p style="color: var(--muted-foreground); font-size: 1.25rem;">AI-powered chord extraction from any song.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Syncing Overlay -->
+  <div id="syncingOverlay">
+    <div class="sync-instruction">Press SPACEBAR or Tap when the singer sings:</div>
+    <div id="nextLineDisplay">...</div>
+    <div class="sync-progress-info" id="syncProgressInfo">Line 1 of 1</div>
+  </div>
+
+  <!-- Loading Overlay — redesigned with equalizer animation -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-card">
+      <div class="equalizer" aria-hidden="true">
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+        <div class="eq-bar"></div>
+      </div>
+      <p id="loadingText">Analyzing audio… This may take a minute.</p>
+      <button id="cancelAnalyzeBtn" class="loading-cancel-btn" type="button">Cancel Analysis</button>
+    </div>
+  </div>
+
+  <div class="error-toast" id="errorToast"></div>
+
+  <div class="chord-tooltip" id="chordTooltip" role="tooltip" aria-hidden="true">
+    <div class="chord-tooltip-inner" id="chordTooltipInner"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@floating-ui/core@1.7.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@floating-ui/dom@1.7.5"></script>
+  <script src="https://omnibrain.github.io/svguitar/js/svguitar.umd.js"></script>
+
+  <script>
+    // Constants
+    const CHORD_ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    const FLAT_MAP = { "C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab", "A#": "Bb" };
+    
+    // UI Display Enharmonic Rules:
+    const DISPLAY_OVERRIDES = {
+      'A#': 'Bb',
+      'Db': 'C#',
+      'D#': 'Eb',
+      'Gb': 'F#',
+      'G#': 'Ab'
+    };
+
+    // State
+    let currentData = null;
+    let fullHistory = [];
+    let transposeOffset = 0;
+    let activeChordIndex = -1;
+    let activeLyricIndex = -1;
+    let parsedLyrics = [];
+    let animationFrame = null;
+    let suggestTimeout = null;
+    let selectedInstrument = 'guitar';
+    let lastUserScrollTime = 0;
+    let analysisController = null;
+    let loadingMessageTimer = null;
+    let loadingMessageIndex = 0;
+    let isManualSyncing = false;
+    let pendingLines = [];
+    let syncIndex = 0;
+    const AUTO_SCROLL_PAUSE_MS = 3000; // Pause auto-scroll for 3s after user interaction
+    const LOADING_MESSAGES = [
+      'Downloading high-quality audio...',
+      'Separating harmonic content...',
+      'Analyzing chromatic frequencies...',
+      'Identifying root notes and bassline...',
+      'Mapping chord progressions...',
+      'Finalizing songbook structure...'
+    ];
+
+    // Audio Context for Visualizer
+    let audioCtx = null;
+    let analyser = null;
+    let visualizerSource = null;
+    let visualizerDataArray = null;
+
+    // Tooltip
+    const tooltip = {
+      el: document.getElementById('chordTooltip'),
+      inner: document.getElementById('chordTooltipInner'),
+      cleanup: null,
+      refEl: null
+    };
+   
+
+    // DOM Elements
+    const elements = {
+      sidebar: document.getElementById('sidebar'),
+      sidebarOverlay: document.getElementById('sidebarOverlay'),
+      drawerToggle: document.getElementById('drawerToggle'),
+      historySearchInput: document.getElementById('historySearchInput'),
+      historyList: document.getElementById('historyList'),
+      searchInput: document.getElementById('searchInput'),
+      analyzeBtn: document.getElementById('analyzeBtn'),
+      suggestionsDropdown: document.getElementById('suggestionsDropdown'),
+      appUI: document.getElementById('appUI'),
+      welcomeUI: document.getElementById('welcomeUI'),
+      displayTitle: document.getElementById('displayTitle'),
+      audioPlayer: document.getElementById('audioPlayer'),
+      toneValue: document.getElementById('toneValue'),
+      capoValue: document.getElementById('capoValue'),
+      transposeDown: document.getElementById('transposeDown'),
+      transposeUp: document.getElementById('transposeUp'),
+      transposeReset: document.getElementById('transposeReset'),
+      chordGrid: document.getElementById('chordGrid'),
+      loadingOverlay: document.getElementById('loadingOverlay'),
+      loadingText: document.getElementById('loadingText'),
+      cancelAnalyzeBtn: document.getElementById('cancelAnalyzeBtn'),
+      activeLyricBar: document.getElementById('active-lyric-bar'),
+      errorToast: document.getElementById('errorToast'),
+      speedSelect: document.getElementById('speedSelect'),
+      visualizerCanvas: document.getElementById('visualizerCanvas'),
+      manualSyncContainer: document.getElementById('manualSyncContainer'),
+      rawLyricsInput: document.getElementById('rawLyricsInput'),
+      startSyncBtn: document.getElementById('startSyncBtn'),
+      syncingOverlay: document.getElementById('syncingOverlay'),
+      nextLineDisplay: document.getElementById('nextLineDisplay'),
+      syncProgressInfo: document.getElementById('syncProgressInfo')
+    };
+
+    // Initialization
+    window.addEventListener('DOMContentLoaded', () => {
+      loadHistory();
+      setupEventListeners();
+    });
+
+    function setupEventListeners() {
+      // Drawer logic
+      const toggleDrawer = (open) => {
+        elements.sidebar.classList.toggle('open', open);
+        elements.sidebarOverlay.classList.toggle('visible', open);
+        document.body.style.overflow = open ? 'hidden' : '';
+      };
+
+      elements.drawerToggle.addEventListener('click', () => toggleDrawer(true));
+      elements.sidebarOverlay.addEventListener('click', () => toggleDrawer(false));
+
+      // History search
+      elements.historySearchInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        const filtered = fullHistory.filter(item => 
+          item.title.toLowerCase().includes(query)
+        );
+        renderHistory(filtered);
+      });
+
+      elements.analyzeBtn.addEventListener('click', () => handleAnalyze());
+      elements.cancelAnalyzeBtn.addEventListener('click', cancelAnalysis);
+
+      // Playback speed
+      elements.speedSelect.addEventListener('change', (e) => {
+        elements.audioPlayer.playbackRate = parseFloat(e.target.value);
+      });
+
+      // Manual Sync Start
+      elements.startSyncBtn.addEventListener('click', () => {
+        const raw = elements.rawLyricsInput.value;
+        pendingLines = raw.split('\n')
+          .map(l => l.trim())
+          .filter(l => l.length > 0);
+        
+        if (pendingLines.length === 0) {
+          showError("Please paste some lyrics first!");
+          return;
+        }
+
+        elements.manualSyncContainer.style.display = 'none';
+        elements.syncingOverlay.style.display = 'flex';
+        syncIndex = 0;
+        parsedLyrics = [];
+        isManualSyncing = true;
+        
+        updateNextLineDisplay();
+        
+        elements.audioPlayer.currentTime = 0;
+        elements.audioPlayer.play();
+      });
+
+      // Tap-to-Sync listeners
+      elements.syncingOverlay.addEventListener('click', handleManualSyncTap);
+
+      // Keyboard shortcuts
+      window.addEventListener('keydown', (e) => {
+        if (isManualSyncing && e.code === 'Space') {
+          e.preventDefault();
+          handleManualSyncTap();
+          return;
+        }
+
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        if (e.code === 'Space') {
+          e.preventDefault();
+          if (elements.audioPlayer.paused) elements.audioPlayer.play();
+          else elements.audioPlayer.pause();
+        } else if (e.code === 'ArrowLeft') {
+          elements.audioPlayer.currentTime = Math.max(0, elements.audioPlayer.currentTime - 5);
+        } else if (e.code === 'ArrowRight') {
+          elements.audioPlayer.currentTime = Math.min(elements.audioPlayer.duration, elements.audioPlayer.currentTime + 5);
+        } else if (e.code === 'ArrowUp') {
+          e.preventDefault();
+          elements.transposeUp.click();
+        } else if (e.code === 'ArrowDown') {
+          e.preventDefault();
+          elements.transposeDown.click();
+        }
+      });
+
+      // Visualizer Init
+      elements.audioPlayer.addEventListener('play', () => {
+        initVisualizer();
+        startVisualizer();
+      });
+
+      elements.transposeDown.addEventListener('click', () => updateTranspose(-1));
+      elements.transposeUp.addEventListener('click', () => updateTranspose(1));
+      elements.transposeReset.addEventListener('click', () => {
+        transposeOffset = 0;
+        updateTransposeDisplay();
+        renderChords();
+      });
+
+      // Instrument selector (Guitar / Piano)
+      const setInstrument = (inst) => {
+        selectedInstrument = inst === 'piano' ? 'piano' : 'guitar';
+        document.documentElement.dataset.instrument = selectedInstrument;
+        document.querySelectorAll('.inst-btn').forEach(b => {
+          b.classList.toggle('active', (b.dataset.inst || 'guitar') === selectedInstrument);
+        });
+        updateTransposeDisplay();
+        renderChords();
+      };
+
+      // Initialize dataset + active state (works even before a song is loaded)
+      setInstrument(selectedInstrument);
+
+      document.querySelectorAll('.inst-btn').forEach(btn => {
+        btn.addEventListener('click', () => setInstrument(btn.dataset.inst));
+      });
+      
+      elements.audioPlayer.addEventListener('seeked', updateActiveChord);
+      elements.audioPlayer.addEventListener('play', startProgressAnimation);
+      elements.audioPlayer.addEventListener('pause', stopProgressAnimation);
+
+      // Search on Enter
+      elements.searchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          hideSuggestions();
+          handleAnalyze();
+        }
+      });
+
+      // Suggestions logic
+      elements.searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        clearTimeout(suggestTimeout);
+        
+        if (!query) {
+          hideSuggestions();
+          return;
+        }
+
+        suggestTimeout = setTimeout(() => fetchSuggestions(query), 300);
+      });
+
+      // Hide suggestions on click outside
+      document.addEventListener('click', (e) => {
+        if (!elements.searchInput.contains(e.target) && !elements.suggestionsDropdown.contains(e.target)) {
+          hideSuggestions();
+        }
+      });
+
+      // Detect manual scrolling to pause auto-scroll — ONLY physical inputs, NOT programmatic scrolls
+      const handleUserInteraction = () => {
+        lastUserScrollTime = Date.now();
+      };
+      
+      const mainContent = document.querySelector('.main-content');
+      if (mainContent) {
+        mainContent.addEventListener('wheel', handleUserInteraction, { passive: true });
+        mainContent.addEventListener('touchmove', handleUserInteraction, { passive: true });
+      }
+    }
+
+    // API Functions
+    async function fetchSuggestions(query) {
+      try {
+        const res = await fetch(`/suggest?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        renderSuggestions(data.suggestions);
+      } catch (err) {
+        console.error('Failed to fetch suggestions', err);
+      }
+    }
+
+    function renderSuggestions(suggestions) {
+      if (!suggestions || suggestions.length === 0) {
+        hideSuggestions();
+        return;
+      }
+
+      elements.suggestionsDropdown.innerHTML = '';
+      suggestions.forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'suggestion-item';
+        div.textContent = s;
+        div.addEventListener('click', () => {
+          elements.searchInput.value = s;
+          hideSuggestions();
+          handleAnalyze();
+          // Close drawer on mobile if open
+          elements.sidebar.classList.remove('open');
+          elements.sidebarOverlay.classList.remove('visible');
+          document.body.style.overflow = '';
+        });
+        elements.suggestionsDropdown.appendChild(div);
+      });
+      elements.suggestionsDropdown.style.display = 'block';
+    }
+
+    function hideSuggestions() {
+      elements.suggestionsDropdown.style.display = 'none';
+    }
+
+    async function initVisualizer() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        visualizerSource = audioCtx.createMediaElementSource(elements.audioPlayer);
+        visualizerSource.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        analyser.fftSize = 64;
+        const bufferLength = analyser.frequencyBinCount;
+        visualizerDataArray = new Uint8Array(bufferLength);
+      } catch (e) {
+        console.error("Visualizer init failed:", e);
+      }
+    }
+
+    function startVisualizer() {
+      if (!analyser || !elements.visualizerCanvas) return;
+      const canvas = elements.visualizerCanvas;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+
+      function draw() {
+        if (elements.audioPlayer.paused) return;
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(visualizerDataArray);
+
+        ctx.clearRect(0, 0, width, height);
+        const barWidth = (width / visualizerDataArray.length) * 2.5;
+        let x = 0;
+
+        for (let i = 0; i < visualizerDataArray.length; i++) {
+          const barHeight = (visualizerDataArray[i] / 255) * height;
+          ctx.fillStyle = `rgba(56, 189, 248, ${0.2 + (barHeight / height)})`;
+          ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
+          x += barWidth;
+        }
+      }
+      draw();
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch('/history');
+        const data = await res.json();
+        fullHistory = data;
+        // Apply search filter if present
+        const query = elements.historySearchInput.value.toLowerCase().trim();
+        const filtered = query 
+           ? fullHistory.filter(item => item.title.toLowerCase().includes(query))
+           : fullHistory;
+         renderHistory(filtered);
+       } catch (err) {
+        console.error('Failed to load history', err);
+      }
+    }
+
+    async function handleAnalyze(url = null) {
+      const query = url || elements.searchInput.value.trim();
+      if (!query) return;
+
+      if (analysisController) {
+        analysisController.abort();
+      }
+      analysisController = new AbortController();
+      elements.analyzeBtn.disabled = true;
+      elements.loadingText.textContent = 'Analyzing audio… This may take a minute.';
+      elements.cancelAnalyzeBtn.disabled = false;
+      elements.cancelAnalyzeBtn.textContent = 'Cancel Analysis';
+      showLoading(true);
+      try {
+        const res = await fetch('/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ search_or_url: query }),
+          signal: analysisController.signal
+        });
+        
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Analysis failed');
+        }
+        
+        const data = await res.json();
+        loadSongData(data);
+        loadHistory(); // Refresh history sidebar
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          console.log('Analysis cancelled');
+          return;
+        }
+        showError(err.message);
+      } finally {
+        analysisController = null;
+        elements.analyzeBtn.disabled = false;
+        showLoading(false);
+      }
+    }
+
+    function cancelAnalysis() {
+      if (analysisController) {
+        elements.loadingText.textContent = 'Cancelling analysis and cleaning up...';
+        elements.cancelAnalyzeBtn.disabled = true;
+        elements.cancelAnalyzeBtn.textContent = 'Cancelling...';
+        analysisController.abort();
+      }
+      analysisController = null;
+      elements.analyzeBtn.disabled = false;
+      showLoading(false);
+    }
+
+    function startLoadingMessages() {
+      stopLoadingMessages();
+      loadingMessageIndex = 0;
+      elements.loadingText.textContent = LOADING_MESSAGES[loadingMessageIndex];
+      loadingMessageTimer = setInterval(() => {
+        loadingMessageIndex = (loadingMessageIndex + 1) % LOADING_MESSAGES.length;
+        elements.loadingText.style.opacity = '0.45';
+        setTimeout(() => {
+          elements.loadingText.textContent = LOADING_MESSAGES[loadingMessageIndex];
+          elements.loadingText.style.opacity = '1';
+        }, 160);
+      }, 2500);
+    }
+
+    function stopLoadingMessages() {
+      if (loadingMessageTimer) {
+        clearInterval(loadingMessageTimer);
+        loadingMessageTimer = null;
+      }
+      elements.loadingText.style.opacity = '1';
+    }
+
+    function loadSongData(data) {
+      currentData = data;
+      transposeOffset = 0;
+      activeChordIndex = -1;
+      activeLyricIndex = -1;
+      
+      elements.displayTitle.textContent = data.title;
+      elements.audioPlayer.src = `/audio/${data.video_id}`;
+      updateTransposeDisplay();
+      
+      renderChords();
+      
+      // Handle lyrics
+      if (data.lyrics) {
+        parsedLyrics = parseLRC(data.lyrics);
+        elements.manualSyncContainer.style.display = 'none';
+      } else {
+        parsedLyrics = [];
+        elements.manualSyncContainer.style.display = 'block';
+      }
+      // Clear the floating lyric bar
+      elements.activeLyricBar.textContent = '';
+      elements.activeLyricBar.classList.remove('faded');
+      
+      elements.welcomeUI.style.display = 'none';
+      elements.appUI.style.display = 'block';
+    }
+
+    // Lyrics Functions
+    function parseLRC(lrcString) {
+      const lines = lrcString.split('\n');
+      const result = [];
+      const timeRegex = /\[(\d+):(\d+\.\d+)\]/;
+
+      lines.forEach(line => {
+        const match = timeRegex.exec(line);
+        if (match) {
+          const minutes = parseInt(match[1]);
+          const seconds = parseFloat(match[2]);
+          const time = minutes * 60 + seconds;
+          const text = line.replace(timeRegex, '').trim();
+          // Keep empty lines — they mark instrumental breaks/solos
+          result.push({ time, text });
+        }
+      });
+      return result.sort((a, b) => a.time - b.time);
+    }
+
+    const INSTRUMENTAL_FADE_SEC = 8;
+
+    function syncLyrics(currentTime) {
+      if (!parsedLyrics.length) return;
+
+      // Find active lyric index
+      let newIdx = -1;
+      for (let i = 0; i < parsedLyrics.length; i++) {
+        if (currentTime >= parsedLyrics[i].time) {
+          newIdx = i;
+        } else {
+          break;
+        }
+      }
+
+      const bar = elements.activeLyricBar;
+
+      // No active lyric — clear and fade out
+      if (newIdx === -1) {
+        bar.textContent = '';
+        bar.classList.add('faded');
+        activeLyricIndex = -1;
+        return;
+      }
+
+      const current = parsedLyrics[newIdx];
+
+      // Empty text = instrumental break marker — clear the bar
+      if (current.text === '') {
+        bar.textContent = '';
+        bar.classList.add('faded');
+        activeLyricIndex = newIdx;
+        return;
+      }
+
+      // Instrumental fade: if we've been on this lyric for >8s and next lyric is still far away
+      const timeSinceLyric = currentTime - current.time;
+      const nextLyric = parsedLyrics[newIdx + 1];
+      const nextIsFar = !nextLyric || (nextLyric.time - current.time) > INSTRUMENTAL_FADE_SEC + 2;
+
+      if (timeSinceLyric > INSTRUMENTAL_FADE_SEC && nextIsFar) {
+        bar.classList.add('faded');
+      } else {
+        bar.classList.remove('faded');
+      }
+
+      // Update text only when index changes to avoid DOM thrashing
+      if (newIdx !== activeLyricIndex) {
+        activeLyricIndex = newIdx;
+        bar.textContent = current.text;
+        bar.classList.remove('faded');
+      }
+    }
+
+    // UI Rendering
+    function renderHistory(items) {
+      elements.historyList.innerHTML = '';
+      [...items].reverse().forEach(item => {
+        const el = document.createElement('div');
+        el.className = 'history-item';
+        el.innerHTML = `
+          <img src="https://img.youtube.com/vi/${item.video_id}/default.jpg" class="history-thumb">
+          <div class="history-info">
+            <div class="history-name">${item.title}</div>
+          </div>
+          <button class="delete-btn" title="Delete from history">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+          </button>
+        `;
+        
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-btn')) return;
+          handleAnalyze(item.source_url);
+          // Close drawer on mobile
+          elements.sidebar.classList.remove('open');
+          elements.sidebarOverlay.classList.remove('visible');
+          document.body.style.overflow = '';
+        });
+
+        const delBtn = el.querySelector('.delete-btn');
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete "${item.title}" from history?`)) {
+            try {
+              const res = await fetch(`/history/${item.video_id}`, { method: 'DELETE' });
+              if (res.ok) {
+                loadHistory();
+                // If the deleted song is currently displayed, hide the UI
+                if (currentData && currentData.video_id === item.video_id) {
+                  elements.audioPlayer.pause();
+                  elements.audioPlayer.src = '';
+                  elements.appUI.style.display = 'none';
+                  elements.welcomeUI.style.display = 'block';
+                  currentData = null;
+                }
+              }
+            } catch (err) {
+              console.error('Delete failed', err);
+            }
+          }
+        });
+
+        elements.historyList.appendChild(el);
+      });
+    }
+
+    function renderChords() {
+      elements.chordGrid.innerHTML = '';
+      if (!currentData) return;
+
+      currentData.chords.forEach((c, i) => {
+        const card = document.createElement('div');
+        card.className = 'chord-card';
+        card.id = `chord-${i}`;
+
+        const next = currentData.chords[i + 1];
+        const hasAudioDuration = Number.isFinite(elements.audioPlayer.duration) && elements.audioPlayer.duration > c.time;
+        const endTime = next ? next.time : (hasAudioDuration ? elements.audioPlayer.duration : Number.POSITIVE_INFINITY);
+        const chordDuration = Math.max(0, endTime - c.time);
+
+        if (chordDuration < 0.835) {
+          card.classList.add('ultra-fast');
+        } else if (chordDuration < 1.2) {
+          card.classList.add('fast');
+        } else if (chordDuration < 2.2) {
+          card.classList.add('medium');
+        }
+
+        // Staggered entrance: cap delay so long lists don't wait forever
+        const delay = Math.min(i * 40, 600);
+        card.style.animationDelay = `${delay}ms`;
+        
+        const normalized = normalizeChordName(c.chord);
+        const displayChord = getTransposedChord(normalized, transposeOffset);
+
+        card.innerHTML = `
+          <div class="chord-progress" id="progress-${i}"></div>
+          <span class="chord-name">${displayChord}</span>
+          <span class="chord-time">${formatTime(c.time)}</span>
+        `;
+
+        // Hover tooltip (mouseenter/mouseleave)
+        card.addEventListener('mouseenter', () => showChordTooltip(card, displayChord));
+        card.addEventListener('mouseleave', () => hideChordTooltip());
+        
+        card.addEventListener('click', (e) => {
+          e.stopPropagation(); // Prevent document listener from firing immediately
+          if (tooltip.refEl === card) {
+            hideChordTooltip();
+          } else {
+            showChordTooltip(card, displayChord);
+          }
+        });
+        
+        elements.chordGrid.appendChild(card);
+      });
+    }
+
+    function showChordTooltip(cardEl, chordName) {
+      tooltip.refEl = cardEl;
+      tooltip.el.setAttribute('aria-hidden', 'false');
+
+      // Render content
+      tooltip.inner.innerHTML = `
+        <div class="tooltip-title">
+          <div class="tooltip-chord">${escapeHtml(chordName)}</div>
+          <div class="tooltip-inst">${selectedInstrument}</div>
+        </div>
+        <div class="tooltip-diagram" id="tooltipDiagram"></div>
+      `;
+
+      const diagramHost = document.getElementById('tooltipDiagram');
+      if (!diagramHost) return;
+
+      // Diagram generation (dynamic)
+      if (selectedInstrument === 'guitar') {
+        renderGuitarDiagram(diagramHost, chordName);
+      } else {
+        renderPianoDiagram(diagramHost, chordName);
+      }
+
+      // Position near the hovered card, keep inside viewport
+      positionTooltip();
+
+      // Show with transition
+      tooltip.el.classList.add('visible');
+    }
+
+    function hideChordTooltip() {
+      tooltip.refEl = null;
+      tooltip.el.classList.remove('visible');
+      tooltip.el.setAttribute('aria-hidden', 'true');
+    }
+
+    async function positionTooltip() {
+      if (!tooltip.refEl) return;
+      if (!window.FloatingUIDOM) return;
+
+      const { computePosition, offset, flip, shift, autoPlacement } = window.FloatingUIDOM;
+
+      try {
+        const { x, y } = await computePosition(tooltip.refEl, tooltip.el, {
+          strategy: 'fixed',
+          placement: 'top',
+          middleware: [
+            offset(10),
+            autoPlacement({ allowedPlacements: ['top', 'bottom', 'right', 'left'], padding: 8 }),
+            flip(),
+            shift({ padding: 8 })
+          ]
+        });
+        tooltip.el.style.left = `${Math.round(x)}px`;
+        tooltip.el.style.top = `${Math.round(y)}px`;
+      } catch (e) {
+        // If positioning fails, just hide to avoid weird UI
+        tooltip.el.classList.remove('visible');
+      }
+    }
+
+    window.addEventListener('scroll', () => {
+      if (tooltip.el.classList.contains('visible')) positionTooltip();
+    }, { passive: true });
+
+    window.addEventListener('resize', () => {
+      if (tooltip.el.classList.contains('visible')) positionTooltip();
+    });
+
+    // Hide tooltip when tapping outside on mobile/desktop
+    document.addEventListener('click', (e) => {
+      if (tooltip.el.classList.contains('visible') && !tooltip.el.contains(e.target)) {
+        hideChordTooltip();
+      }
+    });
+
+    // ---- Diagram helpers ----
+    // --- Guitar chord dictionary (Nut-Side Playability) ---
+    // Strict implementation based on user-provided definitive raw data.
+    // All fret numbers are ABSOLUTE (e.g., if position is 3, barre on that fret is fret: 3).
+    const CMajor = { position: 3, barres: [{ fromString: 5, toString: 1, fret: 3 }], fingers: [[4, 5], [3, 5], [2, 5]] };
+    const CMinor = { position: 3, barres: [{ fromString: 5, toString: 1, fret: 3 }], fingers: [[4, 5], [3, 5], [2, 4]] };
+    const DbMajor = { position: 4, barres: [{ fromString: 5, toString: 1, fret: 4 }], fingers: [[4, 6], [3, 6], [2, 6]] };
+    const DbMinor = { position: 4, barres: [{ fromString: 5, toString: 1, fret: 4 }], fingers: [[4, 6], [3, 6], [2, 5]] };
+    const DMajor = { position: 1, fingers: [[3, 2], [2, 3], [1, 2]] };
+    const DMinor = { position: 1, fingers: [[3, 2], [2, 3], [1, 1]] };
+    const EbMajor = { position: 6, barres: [{ fromString: 5, toString: 1, fret: 6 }], fingers: [[4, 8], [3, 8], [2, 8]] };
+    const EbMinor = { position: 6, barres: [{ fromString: 5, toString: 1, fret: 6 }], fingers: [[4, 8], [3, 8], [2, 7]] };
+    const EMajor = { position: 1, fingers: [[4, 2], [5, 2], [3, 1]] };
+    const EMinor = { position: 1, fingers: [[4, 2], [5, 2]] };
+    const FMajor = { position: 1, barres: [{ fromString: 6, toString: 1, fret: 1 }], fingers: [[3, 2], [4, 3], [5, 3]] };
+    const FMinor = { position: 1, barres: [{ fromString: 6, toString: 1, fret: 1 }], fingers: [[4, 3], [5, 3]] };
+    const GbMajor = { position: 2, barres: [{ fromString: 6, toString: 1, fret: 2 }], fingers: [[3, 3], [4, 4], [5, 4]] };
+    const GbMinor = { position: 2, barres: [{ fromString: 6, toString: 1, fret: 2 }], fingers: [[4, 4], [5, 4]] };
+    const GMajor = { position: 1, fingers: [[6, 3], [5, 2], [1, 3]] };
+    const GMinor = { position: 3, barres: [{ fromString: 6, toString: 1, fret: 3 }], fingers: [[4, 5], [5, 5]] };
+    const AbMajor = { position: 4, barres: [{ fromString: 6, toString: 1, fret: 4 }], fingers: [[5, 6], [4, 6], [3, 5]] };
+    const AbMinor = { position: 4, barres: [{ fromString: 6, toString: 1, fret: 4 }], fingers: [[5, 6], [4, 6]] };
+    const AMajor = { position: 1, fingers: [[2, 2], [3, 2], [4, 2]] };
+    const AMinor = { position: 1, fingers: [[3, 2], [4, 2], [2, 1]] };
+    const BbMajor = { position: 1, barres: [{ fromString: 5, toString: 1, fret: 1 }], fingers: [[2, 3], [3, 3], [4, 3]] };
+    const BbMinor = { position: 1, barres: [{ fromString: 5, toString: 1, fret: 1 }], fingers: [[2, 2], [3, 3], [4, 3]] };
+    const BMajor = { position: 2, barres: [{ fromString: 5, toString: 1, fret: 2 }], fingers: [[2, 4], [3, 4], [4, 4]] };
+    const BMinor = { position: 2, barres: [{ fromString: 5, toString: 1, fret: 2 }], fingers: [[2, 3], [3, 4], [4, 4]] };
+
+    const GUITAR_CHORDS = {
+      'C': CMajor,
+      'Cm': CMinor,
+      'B#m': CMinor,
+      'C#': DbMajor,
+      'Db': DbMajor,
+      'C#m': DbMinor,
+      'Dbm': DbMinor,
+      'D': DMajor,
+      'Dm': DMinor,
+      'D#': EbMajor,
+      'Eb': EbMajor,
+      'D#m': EbMinor,
+      'Ebm': EbMinor,
+      'E': EMajor,
+      'Em': EMinor,
+      'F': FMajor,
+      'Fm': FMinor,
+      'F#': GbMajor,
+      'Gb': GbMajor,
+      'F#m': GbMinor,
+      'Gbm': GbMinor,
+      'G': GMajor,
+      'Gm': GMinor,
+      'G#': AbMajor,
+      'Ab': AbMajor,
+      'G#m': AbMinor,
+      'Abm': AbMinor,
+      'A': AMajor,
+      'Am': AMinor,
+      'A#': BbMajor,
+      'Bb': BbMajor,
+      'A#m': BbMinor,
+      'Bbm': BbMinor,
+      'B': BMajor,
+      'Bm': BMinor
+    };
+
+    function normalizeChordKeyForGuitar(chordName) {
+      // We expect triad-only suffixes already (from normalizeChordName + transpose).
+      const s = String(chordName || '').trim().replace(/\s+/g, '');
+      if (!s) return s;
+      const m = s.match(/^([A-G])([#b]?)(.*)$/);
+      if (!m) return s;
+      const root = m[1] + (m[2] || '');
+      const rest = (m[3] || '').trim(); // e.g. m, sus4, dim, aug
+      return root + rest;
+    }
+
+    function lookupGuitarChordDef(chordName) {
+      const key = normalizeChordKeyForGuitar(chordName);
+      if (GUITAR_CHORDS[key]) return { key, def: GUITAR_CHORDS[key] };
+      return { key, def: null };
+    }
+
+    function renderGuitarDiagram(hostEl, chordName) {
+      // svguitar is a renderer: we must provide fingerings (dictionary lookup).
+      const chartId = `guitarChart`;
+      hostEl.innerHTML = `<div id="${chartId}" class="guitar-diagram"></div>`;
+
+      console.log("Current Chord:", chordName);
+
+      // If svguitar didn't load, keep fallback.
+      if (!window.svguitar || !window.svguitar.SVGuitarChord) {
+        console.error('[ChordTooltip] svguitar missing on window', { hasSvguitar: !!window.svguitar });
+        hostEl.innerHTML = `<p class="tooltip-fallback">Diagram unavailable</p>`;
+        return;
+      }
+
+      const found = lookupGuitarChordDef(chordName);
+      const key = found.key;
+      const chordDef = found.def;
+      if (!chordDef || !chordDef.fingers) {
+        console.log('[ChordTooltip] chord not in dictionary', { chordName, keyTried: key });
+        hostEl.innerHTML = `<p class="tooltip-fallback">Diagram unavailable</p>`;
+        return;
+      }
+
+      // Draw only after tooltip is painted + has dimensions (timing fix).
+      requestAnimationFrame(() => setTimeout(() => {
+        try {
+          const chartHost = hostEl.querySelector(`#${chartId}`);
+          if (!chartHost) return;
+
+          const rect = chartHost.getBoundingClientRect();
+          console.log("Container Ref:", chartHost);
+          console.log('[ChordTooltip] container rect', { width: rect.width, height: rect.height });
+
+          // Clear previous renders
+          chartHost.innerHTML = '';
+
+          const chart = new window.svguitar.SVGuitarChord(`#${chartId}`);
+          
+          // Fix: svguitar treats frets in .chord() as relative to the starting position.
+          // We convert our absolute dictionary frets to relative ones here.
+          const pos = chordDef.position || 1;
+          const relativeFingers = chordDef.fingers.map(([s, f]) => [
+            s, 
+            (typeof f === 'number' && pos > 0) ? (f - pos + 1) : f
+          ]);
+          const relativeBarres = (chordDef.barres || []).map(b => ({
+            ...b,
+            fret: (typeof b.fret === 'number' && pos > 0) ? (b.fret - pos + 1) : b.fret
+          }));
+
+          chart
+            .configure({
+              style: 'normal',
+              color: '#0b1220',
+              backgroundColor: 'none',
+              strings: 6,
+              frets: 4,
+              fretSize: 1.5,
+              position: pos,
+              // Standard Tuning labels: [String 1, String 2, ..., String 6]
+              // String 1 is High E (right), String 6 is Low E (left).
+              // To show E A D G B E from left to right, we must provide them in reverse order.
+              tuning: ['E', 'B', 'G', 'D', 'A', 'E'], 
+              strokeWidth: 2,
+              fontFamily: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
+              titleFontSize: 26,
+              titleBottomMargin: 12,
+              tuningsFontSize: 14,
+              fretLabelFontSize: 22,
+              sidePadding: 0.12,
+              topPadding: 0.2,
+              fingerSize: 0.7,
+              fingerColor: '#0284c7',
+              fingerTextColor: '#ffffff',
+              fingerStrokeWidth: 0,
+              showFretMarkers: false,
+              watermark: ''
+            })
+            .chord({
+              title: chordName,
+              fingers: relativeFingers,
+              barres: relativeBarres
+            })
+            .draw();
+
+          // Hide fallback only if svg actually rendered.
+          const hasSvg = !!chartHost.querySelector('svg');
+          const svgEl = chartHost.querySelector('svg');
+          console.log('[ChordTooltip] svguitar render', { chordName, key, hasSvg, svgLength: svgEl?.outerHTML?.length ?? 0, chordDef });
+          if (!hasSvg) {
+            hostEl.innerHTML = `<p class="tooltip-fallback">Diagram unavailable</p>`;
+          }
+        } catch (e) {
+          console.error('[ChordTooltip] svguitar error', e);
+          hostEl.innerHTML = `<p class="tooltip-fallback">Diagram unavailable</p>`;
+        }
+      }, 50));
+    }
+
+    function buildSimpleGuitarVoicing(chordPcs, maxFret = 5) {
+      // svguitar string numbering: 1 = high E, 6 = low E
+      // Standard tuning pitch classes: E A D G B E
+      const tuningPcsByString = {
+        6: 4, // E
+        5: 9, // A
+        4: 2, // D
+        3: 7, // G
+        2: 11, // B
+        1: 4  // E
+      };
+
+      const fingers = [];
+      for (let s = 6; s >= 1; s--) {
+        const openPc = tuningPcsByString[s];
+        let chosen = null;
+        for (let fret = 0; fret <= maxFret; fret++) {
+          const pc = (openPc + fret) % 12;
+          if (chordPcs.has(pc)) { chosen = fret; break; }
+        }
+        if (chosen === null) {
+          fingers.push([s, 'x']);
+        } else {
+          fingers.push([s, chosen]);
+        }
+      }
+      return fingers;
+    }
+
+    function renderPianoDiagram(hostEl, chordName) {
+      const parsed = chordToPitchClassesWithRoot(chordName);
+      const pcs = parsed?.pcs;
+      const rootPc = parsed?.rootPc;
+      if (!pcs || pcs.size === 0 || rootPc == null) {
+        hostEl.textContent = 'Diagram unavailable';
+        return;
+      }
+
+      hostEl.innerHTML = buildPianoSvg(pcs, rootPc);
+    }
+
+    function buildPianoSvg(chordPcs, rootPc) {
+      // Render keyboard starting exactly 3 WHITE KEYS before the chord's lowest note.
+      // With our triad-only simplification, the "lowest note" is treated as the chord root.
+      const WHITE_PCS = [0, 2, 4, 5, 7, 9, 11];
+
+      const toWhiteAtOrBelow = (pc) => {
+        let p = pc;
+        while (!WHITE_PCS.includes(p)) p = (p + 11) % 12;
+        return p;
+      };
+
+      const prevWhite = (pc) => {
+        const idx = WHITE_PCS.indexOf(pc);
+        return WHITE_PCS[(idx + 6) % 7];
+      };
+
+      // Start exactly 3 white keys before the lowest note (root).
+      let startPc = toWhiteAtOrBelow(rootPc);
+      startPc = prevWhite(prevWhite(prevWhite(startPc)));
+
+      // Build a wider view for context: 10 white keys (3 before + enough to cover chord area).
+      const white = [];
+      let pc = startPc;
+      for (let i = 0; i < 10; i++) {
+        white.push({ pc });
+        // move to next white key
+        const next = (pc + 1) % 12;
+        if (WHITE_PCS.includes(next)) pc = next;
+        else pc = (pc + 2) % 12;
+      }
+
+      // Black keys between whites
+      const black = [];
+      for (let i = 0; i < white.length - 1; i++) {
+        const a = white[i].pc;
+        const b = white[i + 1].pc;
+        const diff = (b - a + 12) % 12;
+        if (diff === 2) {
+          black.push({ between: i, pc: (a + 1) % 12 });
+        } else {
+          black.push(null);
+        }
+      }
+
+      const whiteW = 26;
+      const whiteH = 76;
+      const blackW = 16;
+      const blackH = 44;
+      const rx = 3;
+      const width = whiteW * white.length;
+      const height = 78;
+
+      let svg = `<svg class="piano-svg" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" aria-label="Piano chord diagram">`;
+
+      // Root key index within the rendered white keys.
+      const rootWhitePc = toWhiteAtOrBelow(rootPc);
+      const rootIdx = white.findIndex(k => k.pc === rootWhitePc);
+
+      // White keys
+      white.forEach((k, i) => {
+        const x = i * whiteW;
+        // Only highlight chord tones AT/RIGHT of the root position (padding keys stay unhighlighted)
+        const on = (rootIdx === -1 ? chordPcs.has(k.pc) : (i >= rootIdx && chordPcs.has(k.pc)));
+        svg += `<rect x="${x}" y="1" width="${whiteW}" height="${whiteH}" rx="${rx}" class="piano-white${on ? ' piano-on-white' : ''}"></rect>`;
+      });
+
+      // Black keys
+      black.forEach((k) => {
+        if (!k) return;
+        const x = (k.between + 1) * whiteW - (blackW / 2);
+        // Same rule: don't highlight left padding
+        const on = (rootIdx === -1 ? chordPcs.has(k.pc) : ((k.between + 1) >= rootIdx && chordPcs.has(k.pc)));
+        svg += `<rect x="${x}" y="1" width="${blackW}" height="${blackH}" rx="2" class="piano-black${on ? ' piano-on-black' : ''}"></rect>`;
+      });
+
+      svg += `</svg>`;
+      return svg;
+    }
+
+    // ---- Chord parsing (basic, supports common qualities) ----
+    function chordToPitchClassesWithRoot(chordName) {
+      const parsed = parseChord(chordName);
+      if (!parsed) return null;
+      const rootPc = noteToPc(parsed.root);
+      if (rootPc == null) return null;
+
+      const intervals = qualityToIntervals(parsed.quality);
+      const pcs = new Set(intervals.map(semi => (rootPc + semi) % 12));
+      return { pcs, rootPc, quality: parsed.quality, root: parsed.root };
+    }
+
+    function parseChord(name) {
+      if (!name || name === 'N.C.') return null;
+      let s = String(name).trim();
+      // Strip bass note (slash chords) and extra annotations
+      if (s.includes('/')) s = s.split('/')[0].trim();
+      s = s.replace(/\(.*?\)/g, '').trim();
+
+      const m = s.match(/^([A-G])([#b]?)(.*)$/);
+      if (!m) return null;
+      const root = m[1] + (m[2] || '');
+      const quality = (m[3] || '').trim();
+      return { root, quality };
+    }
+
+    // Normalize/cleanup chord names to basic triads (remove 7 / maj7 etc.)
+    function normalizeChordName(raw) {
+      if (!raw) return raw;
+      let s = String(raw).trim();
+      if (!s || s === 'N.C.') return s;
+
+      // Strip slash bass and parentheses annotations
+      if (s.includes('/')) s = s.split('/')[0].trim();
+      s = s.replace(/\(.*?\)/g, '').trim();
+
+      const m = s.match(/^([A-G])([#b]?)(.*)$/);
+      if (!m) return s;
+
+      let root = m[1] + (m[2] || '');
+      const suf = (m[3] || '').trim();
+      
+      if (DISPLAY_OVERRIDES[root]) {
+        root = DISPLAY_OVERRIDES[root];
+      }
+
+      const t = suf.replace(/\s+/g, '').toLowerCase();
+
+      // Keep only triad quality
+      if (t.includes('m7b5') || t.startsWith('dim') || t.includes('ø')) return root + 'dim';
+      if (t.startsWith('aug') || t.startsWith('+')) return root + 'aug';
+      if (t.startsWith('sus2')) return root + 'sus2';
+      if (t.startsWith('sus4') || t.startsWith('sus')) return root + 'sus4';
+      if (t === 'm' || t.startsWith('m') || t.startsWith('min')) return root + 'm';
+
+      // Default major triad (strip maj7/7/etc.)
+      return root;
+    }
+
+    function noteToPc(note) {
+      const map = { C:0,'C#':1,Db:1, D:2,'D#':3,Eb:3, E:4, F:5,'F#':6,Gb:6, G:7,'G#':8,Ab:8, A:9,'A#':10,Bb:10, B:11 };
+      return map[note] ?? null;
+    }
+
+    function qualityToIntervals(q) {
+      // This app intentionally shows TRIADS only (no 7 / maj7 extensions),
+      // to keep diagrams simple and consistent.
+      const s = (q || '').replace(/\s+/g, '');
+
+      // Suspended chords keep their 3-note structure
+      if (s.startsWith('sus2')) return [0, 2, 7];
+      if (s.startsWith('sus4') || s.startsWith('sus')) return [0, 5, 7];
+
+      // Diminished / half-diminished: show diminished triad
+      if (s.startsWith('dim') || s.startsWith('m7b5')) return [0, 3, 6];
+
+      // Augmented triad
+      if (s.startsWith('aug') || s === '+') return [0, 4, 8];
+
+      // Minor family (m, m7, m9, mMaj7, etc.) -> minor triad
+      if (s === 'm' || s === 'min' || s.startsWith('m')) return [0, 3, 7];
+
+      // Everything else (maj, 7, maj7, add9, 6, etc.) -> major triad
+      return [0, 4, 7];
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch]));
+    }
+
+    // Logic Functions
+    function updateTranspose(delta) {
+      transposeOffset += delta;
+      updateTransposeDisplay();
+      renderChords();
+    }
+
+    function updateTransposeDisplay() {
+      elements.toneValue.textContent = `${transposeOffset > 0 ? '+' : ''}${transposeOffset}`;
+      let capo = (12 - (transposeOffset % 12)) % 12;
+      elements.capoValue.textContent = `Capo: ${capo}`;
+      elements.capoValue.style.display = selectedInstrument === 'guitar' ? 'block' : 'none';
+    }
+
+    function showError(msg) {
+      elements.errorToast.textContent = msg;
+      elements.errorToast.style.display = 'block';
+      setTimeout(() => {
+        elements.errorToast.style.display = 'none';
+      }, 5000);
+    }
+
+    function getTransposedChord(chord, offset) {
+      if (!chord || chord === "N.C." || offset === 0) return chord;
+      
+      const match = chord.match(/^([A-G][#b]?)(.*)$/);
+      if (!match) return chord;
+      
+      let root = match[1];
+      const suffix = match[2];
+      
+      // Normalize root to index 0-11
+      const SHARP_ROOTS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+      const FLAT_ROOTS  = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+      
+      // Find current index
+      let idx = SHARP_ROOTS.indexOf(root);
+      if (idx === -1) idx = FLAT_ROOTS.indexOf(root);
+      if (idx === -1) return chord;
+      
+      let newIdx = (idx + offset) % 12;
+      while (newIdx < 0) newIdx += 12;
+      
+      // Decide between sharp and flat for display
+      // Rule of thumb: use flats if transposing down, sharps if up
+      const useFlats = offset < 0;
+      let newRoot = useFlats ? FLAT_ROOTS[newIdx] : SHARP_ROOTS[newIdx];
+      
+      // Apply UI overrides for consistency
+      if (DISPLAY_OVERRIDES[newRoot]) {
+        newRoot = DISPLAY_OVERRIDES[newRoot];
+      }
+      
+      return newRoot + suffix;
+    }
+
+    function syncChords(displayTime, actualTime = displayTime) {
+      if (!currentData || !currentData.chords) return;
+      
+      const chords = currentData.chords;
+      let newIdx = -1;
+      
+      // Find the active chord based on displayTime (compensated for latency)
+      for (let i = 0; i < chords.length; i++) {
+        if (displayTime >= chords[i].time) {
+          newIdx = i;
+        } else {
+          break;
+        }
+      }
+      
+      // If index changed, update UI classes and scroll
+      if (newIdx !== activeChordIndex) {
+        if (activeChordIndex !== -1) {
+          const oldCard = document.getElementById(`chord-${activeChordIndex}`);
+          if (oldCard) {
+            oldCard.classList.remove('active');
+            const oldProg = document.getElementById(`progress-${activeChordIndex}`);
+            if (oldProg) oldProg.style.width = '0%';
+          }
+        }
+        
+        activeChordIndex = newIdx;
+        
+        if (activeChordIndex !== -1) {
+          const newCard = document.getElementById(`chord-${activeChordIndex}`);
+          if (newCard) {
+            newCard.classList.add('active');
+            
+            const isUserInteracting = (Date.now() - lastUserScrollTime) < AUTO_SCROLL_PAUSE_MS;
+            if (!isUserInteracting) {
+              const mainContent = document.querySelector('.main-content');
+              const header = document.querySelector('.app-header-sticky');
+              if (mainContent && header) {
+                const cardRect = newCard.getBoundingClientRect();
+                const isMobile = window.innerWidth <= 768;
+                
+                if (isMobile) {
+                  // On mobile, the scroll container is the window/body
+                  const headerHeight = header.offsetHeight;
+                  const currentScrollY = window.pageYOffset || document.documentElement.scrollTop;
+                  // cardRect.top is relative to viewport, so we add current scroll to get absolute position
+                  const targetY = cardRect.top + currentScrollY - headerHeight - 30;
+                  window.scrollTo({ top: targetY, behavior: 'smooth' });
+                } else {
+                  // On desktop, .main-content is the scroll container
+                  const containerTop = mainContent.getBoundingClientRect().top;
+                  const scrollOffset = cardRect.top - containerTop + mainContent.scrollTop;
+                  const headerHeight = header.offsetHeight;
+                  const targetY = scrollOffset - headerHeight - 40;
+                  mainContent.scrollTo({ top: targetY, behavior: 'smooth' });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Progress bar should follow displayTime for a "snappy" feeling that matches the highlight
+      if (activeChordIndex !== -1) {
+        const current = chords[activeChordIndex];
+        const next = chords[activeChordIndex + 1];
+        const startTime = current.time;
+        const endTime = next ? next.time : elements.audioPlayer.duration;
+        const duration = endTime - startTime;
+        
+        if (duration > 0) {
+          const progress = Math.min(100, Math.max(0, ((displayTime - startTime) / duration) * 100));
+          const progEl = document.getElementById(`progress-${activeChordIndex}`);
+          if (progEl) progEl.style.width = `${progress}%`;
+        }
+      }
+    }
+
+    function updateActiveChord() {
+      // Coarse sync for seek/stop - use raw time
+      const currentTime = elements.audioPlayer.currentTime;
+      syncChords(currentTime);
+      syncLyrics(currentTime);
+    }
+
+    function startProgressAnimation() {
+      function animate() {
+        // High-precision sync during playback.
+        // Compensation offset to account for browser audio latency and UI lag.
+        // Fine-tuned to 0.22s (220ms) for perfect audio-visual lock.
+        const actual = elements.audioPlayer.currentTime;
+        const display = actual + 0.22; 
+        syncChords(display, actual);
+        syncLyrics(actual); // Lyrics don't need the same "snappy" compensation as chords
+        animationFrame = requestAnimationFrame(animate);
+      }
+      animationFrame = requestAnimationFrame(animate);
+    }
+
+    function stopProgressAnimation() {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      // Ensure current state is reflected when paused
+      updateActiveChord();
+    }
+
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function handleManualSyncTap() {
+      if (!isManualSyncing) return;
+
+      const time = elements.audioPlayer.currentTime;
+      parsedLyrics.push({ time, text: pendingLines[syncIndex] });
+      
+      syncIndex++;
+      if (syncIndex < pendingLines.length) {
+        updateNextLineDisplay();
+      } else {
+        finishManualSync();
+      }
+    }
+
+    function updateNextLineDisplay() {
+      elements.nextLineDisplay.textContent = pendingLines[syncIndex];
+      elements.syncProgressInfo.textContent = `Line ${syncIndex + 1} of ${pendingLines.length}`;
+    }
+
+    function finishManualSync() {
+      isManualSyncing = false;
+      elements.syncingOverlay.style.display = 'none';
+      elements.audioPlayer.pause();
+      
+      // Update the current data with newly synced lyrics
+      if (currentData) {
+        currentData.lyrics = parsedLyrics.map(l => {
+          const m = Math.floor(l.time / 60);
+          const s = (l.time % 60).toFixed(2);
+          return `[${m.toString().padStart(2, '0')}:${s.toString().padStart(5, '0')}]${l.text}`;
+        }).join('\n');
+      }
+      
+      renderChords();
+    }
+
+    function showLoading(show) {
+      if (show) {
+        startLoadingMessages();
+        elements.loadingOverlay.style.display = 'flex';
+        // Trigger fade-in on next frame
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            elements.loadingOverlay.classList.add('visible');
+          });
+        });
+      } else {
+        stopLoadingMessages();
+        elements.loadingOverlay.classList.remove('visible');
+        elements.loadingText.textContent = 'Analyzing audio… This may take a minute.';
+        elements.cancelAnalyzeBtn.disabled = false;
+        elements.cancelAnalyzeBtn.textContent = 'Cancel Analysis';
+        // Wait for fade-out transition before hiding
+        elements.loadingOverlay.addEventListener('transitionend', () => {
+          if (!elements.loadingOverlay.classList.contains('visible')) {
+            elements.loadingOverlay.style.display = 'none';
+          }
+        }, { once: true });
+      }
+    }
+  </script>
+</body>
+</html>

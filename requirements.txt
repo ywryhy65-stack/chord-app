@@ -1,7 +1,10 @@
 fastapi
 uvicorn
-requests
-yt-dlp
+pydantic
 librosa
 numpy
 scipy
+requests
+yt-dlp
+spleeter
+python-multipart

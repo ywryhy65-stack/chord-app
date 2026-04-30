@@ -1,20 +1,56 @@
+import json
 import html
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import traceback
+import socket
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import parse_qs, urlparse
+
+# Ensure Homebrew and common paths are in PATH for Apple Silicon/Intel Macs
+os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin"
 
 import librosa
 import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from scipy.ndimage import median_filter
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
+
+
+# Force IPv4 for requests
+class IPv4Adapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs['socket_options'] = HTTPAdapter.default_poolmanager_extended_kwargs(None).get('socket_options', []) + [
+            (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1),
+            (socket.IPPROTO_IP, socket.IP_TOS, 0x10), # IPTOS_LOWDELAY
+        ]
+        # This is a bit hacky but works for forcing IPv4 in many environments
+        # by overriding the family in the pool manager's connection.
+        return super().init_poolmanager(*args, **kwargs)
+
+def get_resilient_session():
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+resilient_session = get_resilient_session()
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -39,13 +75,13 @@ class AnalyzeRequest(BaseModel):
     search_or_url: str = Field(..., min_length=1, max_length=2048)
 
 
-CHORD_LABELS = [
-    "C", "C#", "D", "D#", "E", "F",
-    "F#", "G", "G#", "A", "A#", "B",
+CHORD_ROOTS = [
+    "C", "C#", "D", "Eb", "E", "F",
+    "F#", "G", "Ab", "A", "Bb", "B",
 ]
 
-# Drop chord runs shorter than this (passing notes / glissandi); time folds into prior stable chord.
-MIN_DURATION_SEC = 0.8
+# Drop chord runs shorter than this (0.4s allows single-beat chord changes)
+MIN_DURATION_SEC = 0.67
 
 # Extra template id for low-RMS (non-musical) frames; kept in chord_names alongside major/minor.
 NC_CHORD_LABEL = "N.C."
@@ -120,15 +156,24 @@ def _clean_spotify_title(raw_title: str) -> str:
 
 def _spotify_url_to_search_query(spotify_url: str) -> str:
     try:
-        r = requests.get(
+        r = resilient_session.get(
             spotify_url.strip(),
             timeout=20,
             headers=_HTTP_BROWSER_HEADERS,
         )
         r.raise_for_status()
     except requests.RequestException as exc:
+        status_code = 400
+        if r.status_code == 404:
+            status_code = 404
+        elif r.status_code >= 500:
+            status_code = 502
+        
+        if "timeout" in str(exc).lower():
+            status_code = 504
+            
         raise HTTPException(
-            status_code=400,
+            status_code=status_code,
             detail=f"Could not load Spotify page: {exc}",
         ) from exc
     m = _HTML_TITLE_RE.search(r.text)
@@ -149,13 +194,21 @@ def _ytsearch_first_video_id(query: str) -> str:
         "no_warnings": True,
         "noplaylist": True,
         "skip_download": True,
+        "socket_timeout": 30,
+        "source_address": "0.0.0.0", # Force IPv4
+        "retries": 5,
+        "extractor_retries": 3,
+        "remote_components": ["ejs:github"],
     }
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch1:{q}", download=False)
     except Exception as exc:
+        status_code = 400
+        if "timeout" in str(exc).lower():
+            status_code = 504
         raise HTTPException(
-            status_code=400,
+            status_code=status_code,
             detail=f"YouTube search failed: {exc}",
         ) from exc
     if not info:
@@ -209,43 +262,70 @@ def resolve_input_to_youtube(raw: str) -> tuple[str, str]:
 
 
 def _major_minor_templates() -> tuple[np.ndarray, list[str]]:
-    """24 chroma templates (12 major + 12 minor), L2-normalized for cosine similarity."""
-    majors: list[np.ndarray] = []
-    minors: list[np.ndarray] = []
+    templates: list[np.ndarray] = []
     labels: list[str] = []
 
-    for r in range(12):
+    def add_template(root, intervals, label_suffix=""):
         v = np.zeros(12, dtype=np.float64)
-        v[r] = 1.0
-        v[(r + 4) % 12] += 1.0
-        v[(r + 7) % 12] += 1.0
-        majors.append(v / np.linalg.norm(v))
+        for semi in intervals:
+            v[(root + semi) % 12] += 1.0
+
+        # Add subtle perfect fifth overtone to assist with bass tracking
+        v[(root + 7) % 12] += 0.3
+
+        norm = np.linalg.norm(v)
+        if norm > 0:
+            v /= norm
+        templates.append(v)
+        labels.append(f"{CHORD_ROOTS[root]}{label_suffix}")
 
     for r in range(12):
-        v = np.zeros(12, dtype=np.float64)
-        v[r] = 1.0
-        v[(r + 3) % 12] += 1.0
-        v[(r + 7) % 12] += 1.0
-        minors.append(v / np.linalg.norm(v))
+        # We only keep Major and Minor to prevent erratic chord jumps
+        add_template(r, [0, 4, 7], "")           # Major
+        add_template(r, [0, 3, 7], "m")          # Minor
 
-    for r in range(12):
-        labels.append(CHORD_LABELS[r])
-    for r in range(12):
-        labels.append(f"{CHORD_LABELS[r]}m")
-
-    templates = np.stack(majors + minors, axis=0)
-    return templates, labels
+    return np.array(templates), labels
 
 
-def _median_kernel_frames(sr: int, hop_length: int, window_sec: float, n_frames: int) -> int:
-    """Odd kernel length in frames (~window_sec); capped to array length, at least 1."""
-    k = max(3, int(round(window_sec * sr / float(hop_length))))
-    if k % 2 == 0:
-        k += 1
-    k = min(k, max(1, n_frames))
-    if k % 2 == 0:
-        k -= 1
-    return max(k, 1)
+def _generate_transition_matrix(n_states: int, self_prob: float = 0.98) -> np.ndarray:
+    """
+    Generate transition matrix. self_prob=0.98 is perfectly balanced
+    for 10-frames-per-second analysis to prevent flickering.
+    """
+    trans = np.full((n_states, n_states), (1.0 - self_prob) / (n_states - 1))
+    np.fill_diagonal(trans, self_prob)
+    return trans
+
+
+def _separate_stems(audio_path: Path) -> Path:
+    """
+    Step 1: Use Spleeter to separate accompaniment from vocals.
+    Isolates harmonic/bass content and mutes vocals/drums.
+    """
+    try:
+        # Check if spleeter is available
+        if shutil.which("spleeter") is None:
+            return audio_path
+
+        output_dir = audio_path.parent / "spleeter_output"
+        # 2stems model: vocals + accompaniment
+        acc_path = output_dir / audio_path.stem / "accompaniment.wav"
+        
+        if not acc_path.exists():
+            cmd = [
+                "spleeter", "separate",
+                "-p", "spleeter:2stems",
+                "-o", str(output_dir),
+                str(audio_path)
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+        
+        if acc_path.exists():
+            return acc_path
+    except Exception as e:
+        print(f"DEBUG: Spleeter failed: {e}. Falling back to original audio.")
+    
+    return audio_path
 
 
 def _run_length_encode_chords(
@@ -347,69 +427,173 @@ def _merge_short_transients(
     return merged
 
 
-def _download_audio(youtube_url: str, output_wav_path: Path) -> None:
+def _cleanup_old_audio(keep_count: int = 3):
+    """Scan AUDIO_CACHE_DIR for .wav files and keep only the newest ones."""
+    if not AUDIO_CACHE_DIR.exists():
+        return
+    
+    wav_files = list(AUDIO_CACHE_DIR.glob("*.wav"))
+    # Sort by modification time (mtime), newest first
+    wav_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    
+    # Delete anything beyond the keep_count
+    for old_wav in wav_files[keep_count:]:
+        try:
+            old_wav.unlink()
+        except Exception as e:
+            print(f"DEBUG: Failed to delete old audio {old_wav}: {e}")
+
+
+def _download_audio(youtube_url: str, output_wav_path: Path) -> str:
     # Use yt-dlp with ffmpeg to extract a WAV file.
     cmd = [
         "yt-dlp",
+        "--verbose",
         "--extract-audio",
         "--audio-format",
         "wav",
         "--audio-quality",
         "0",
+        "--socket-timeout", "30",
+        "--force-ipv4",
+        "--retries", "5",
+        "--extractor-retries", "3",
+        "--remote-components", "ejs:github",
         "-o",
         str(output_wav_path.with_suffix(".%(ext)s")),
         youtube_url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300) # 5 min limit for download
+    except subprocess.TimeoutExpired as exc:
         raise HTTPException(
-            status_code=400,
-            detail=f"yt-dlp failed: {result.stderr.strip() or result.stdout.strip()}",
+            status_code=504,
+            detail=f"Audio download timed out after 5 minutes: {exc}",
+        ) from exc
+    
+    # Force Console Logging
+    print(f"--- yt-dlp STDOUT ---\n{result.stdout}")
+    print(f"--- yt-dlp STDERR ---\n{result.stderr}")
+    
+    if result.returncode != 0:
+        error_msg = result.stderr.strip() or result.stdout.strip()
+        status_code = 400
+        if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+            status_code = 504
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"yt-dlp failed with return code {result.returncode}. Error: {error_msg}",
         )
+    return result.stderr.strip()
 
 
 def _estimate_chords(audio_path: Path) -> list[dict]:
-    y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
-    y_harmonic, _y_perc = librosa.effects.hpss(y)
+    """
+    Refined Extraction Pipeline: Fixed Frame analysis (No Beat-Tracker Gaps)
+    with Global Key Awareness and vocal rumble suppression.
+    """
+    # 1. Source Separation (Try Spleeter, fallback gracefully if missing)
+    harmonic_audio_path = _separate_stems(audio_path)
+    
+    # Use 22050 Hz for standard DSP (faster and drops super high vocal frequencies)
+    y, sr = librosa.load(str(harmonic_audio_path), sr=22050, mono=True)
     total_duration = float(len(y)) / float(sr)
-    hop_length = 512
-    estimated_tuning = librosa.estimate_tuning(y=y_harmonic, sr=sr)
-    chroma = librosa.feature.chroma_cens(
+
+    # 2. Aggressive Harmonic Isolation (Crucial if Spleeter is missing)
+    # This heavily suppresses drums and vocal transients.
+    y_harmonic, _ = librosa.effects.hpss(y, margin=(2.0, 5.0))
+
+    # 3. Fixed Frame Extraction (Solves the "Black Hole" gap)
+    hop_length = 2048  # ~10.7 frames per second. Consistent and reliable.
+    
+    # 4. Chroma Extraction (Locked to Instrument range)
+    # fmin=C3 (130Hz) ignores chest-voice vocal rumble from baritone singers.
+    chroma = librosa.feature.chroma_cqt(
         y=y_harmonic,
         sr=sr,
         hop_length=hop_length,
-        tuning=estimated_tuning,
+        n_octaves=5,                  # Ignore extremely high vocal notes
+        fmin=librosa.note_to_hz('C3') # Start from C3 to focus on harmonic instruments
     )
-    times = librosa.times_like(chroma, sr=sr, hop_length=hop_length)
-
+    
+    # Standardize and Normalize
+    chroma = librosa.util.normalize(chroma, axis=0)
+    
+    # 5. Global Key Detection & Diatonic Masking
+    # Sum chroma over time to find the overall tonal distribution
+    global_chroma = np.sum(chroma, axis=1)
+    
     templates, chord_names = _major_minor_templates()
-    # Unit-normalize each frame so dot product == cosine similarity to templates.
-    chroma_norm = chroma / (np.linalg.norm(chroma, axis=0, keepdims=True) + 1e-12)
-    # (24, T) similarity scores
-    scores = templates @ chroma_norm
-    best_idx = np.argmax(scores, axis=0).astype(np.int32)
-    confidence = np.max(scores, axis=0)
+    nc_template = np.zeros(12)
+    templates_with_nc = np.vstack([templates, nc_template])
+    chord_names_with_nc = chord_names + [NC_CHORD_LABEL]
 
-    n_frames = int(best_idx.shape[0])
-    if n_frames == 0:
-        return []
+    # Key Profiles (Krumhansl-Schmuckler) to find the Global Key
+    # Major/Minor templates already exist, we'll correlate them with global_chroma
+    key_scores = np.dot(templates, global_chroma)
+    best_key_idx = np.argmax(key_scores)
+    
+    # Extract root and mode (Major/Minor) from the best template
+    # Templates are stored as [Maj-0, Min-0, Maj-1, Min-1, ...] or similar?
+    # Actually _major_minor_templates returns [Maj-0, Min-0, Maj-1, Min-1, ...]
+    is_minor_key = (best_key_idx % 2 == 1)
+    key_root = best_key_idx // 2
+    
+    # Create Diatonic Mask
+    # Diatonic degrees for Major: 0, 2, 4, 5, 7, 9, 11
+    # Diatonic degrees for Minor: 0, 2, 3, 5, 7, 8, 10
+    if is_minor_key:
+        diatonic_steps = [0, 2, 3, 5, 7, 8, 10]
+        # Common chords in Minor: i, III, iv, v, VI, VII
+        diatonic_chords = [
+            (0, "m"), (3, ""), (5, "m"), (7, "m"), (8, ""), (10, "")
+        ]
+    else:
+        diatonic_steps = [0, 2, 4, 5, 7, 9, 11]
+        # Common chords in Major: I, ii, iii, IV, V, vi
+        diatonic_chords = [
+            (0, ""), (2, "m"), (4, "m"), (5, ""), (7, ""), (9, "m")
+        ]
 
-    rms = librosa.feature.rms(y=y_harmonic, hop_length=hop_length)[0]
-    rms = _align_series_to_n_frames(np.asarray(rms, dtype=np.float64), n_frames)
-    rms_max = float(np.max(rms)) if rms.size else 0.0
-    threshold = rms_max * 0.05
-    low_energy = rms < threshold
-    nc_id = len(chord_names)
-    chord_names_nc = chord_names + [NC_CHORD_LABEL]
-    best_idx = np.where(low_energy, np.int32(nc_id), best_idx)
-    confidence = np.where(low_energy, np.float64(0.0), confidence)
+    # Convert relative diatonic chords to absolute indices in templates
+    # templates are ordered: for r in range(12): add_template(r, Maj), add_template(r, Min)
+    diatonic_indices = []
+    for root_rel, suffix in diatonic_chords:
+        root_abs = (key_root + root_rel) % 12
+        # Index in templates is root_abs * 2 (Major) or root_abs * 2 + 1 (Minor)
+        idx = root_abs * 2 if suffix == "" else root_abs * 2 + 1
+        diatonic_indices.append(idx)
+    
+    # Include the "No Chord" index as valid
+    nc_idx = len(chord_names_with_nc) - 1
+    
+    # Apply Penalty Mask (Diatonic = 1.0, Non-Diatonic = 0.01)
+    mask = np.full(len(chord_names_with_nc), 0.01)
+    mask[diatonic_indices] = 1.0
+    mask[nc_idx] = 0.5 # Slightly penalize NC to prefer musical content
 
-    # ~1.25s median window suppresses split-second label noise (odd kernel, edge-safe mode).
-    median_window_sec = 1.25
-    kernel = _median_kernel_frames(sr, hop_length, median_window_sec, n_frames)
-    smoothed_ids = median_filter(best_idx, size=kernel, mode="nearest").astype(np.int32)
+    # 6. Observation Probabilities
+    scores = np.dot(templates_with_nc, chroma)
+    prob_matrix = np.exp(scores * 10.0)
+    
+    # Gating by Diatonic Mask
+    prob_matrix *= mask[:, np.newaxis]
+    
+    prob_matrix /= (np.sum(prob_matrix, axis=0) + 1e-12)
+    
+    # 7. Transition Matrix (0.98 for 10fps stability)
+    n_chords = len(chord_names_with_nc)
+    transition_matrix = _generate_transition_matrix(n_chords, self_prob=0.98)
+    
+    # Viterbi decoding
+    final_ids = librosa.sequence.viterbi(prob_matrix, transition_matrix)
+    confidence = np.max(prob_matrix, axis=0)
 
-    rle = _run_length_encode_chords(smoothed_ids, times, confidence, chord_names_nc)
+    # 8. Map to Timestamps (Fixed Grid)
+    times = librosa.frames_to_time(np.arange(len(final_ids)), sr=sr, hop_length=hop_length)
+
+    # Final output
+    rle = _run_length_encode_chords(final_ids, times, confidence, chord_names_with_nc)
     return _merge_short_transients(rle, total_duration)
 
 
@@ -425,8 +609,28 @@ def serve_cached_audio(video_id: str):
     if not _VIDEO_ID_RE.match(video_id):
         raise HTTPException(status_code=404, detail="Invalid video id")
     path = AUDIO_CACHE_DIR / f"{video_id}.wav"
+    
+    # Lazy Re-download Fallback
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Audio not found for this video")
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            wav_stem = tmp_path / "audio"
+            wav_file = tmp_path / "audio.wav"
+            
+            try:
+                _download_audio(youtube_url, wav_stem)
+                if not wav_file.exists():
+                    candidates = list(tmp_path.glob("audio.*"))
+                    if not candidates:
+                        raise HTTPException(status_code=500, detail="Fallback download failed to produce audio file")
+                    wav_file = candidates[0]
+                
+                AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(wav_file, path)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Audio not found and lazy re-download failed: {e}")
+
     return FileResponse(
         str(path),
         media_type="audio/wav",
@@ -434,40 +638,316 @@ def serve_cached_audio(video_id: str):
     )
 
 
+@app.get("/history")
+def get_history():
+    history = []
+    if AUDIO_CACHE_DIR.exists():
+        for json_file in AUDIO_CACHE_DIR.glob("*.json"):
+            try:
+                with open(json_file, "r") as f:
+                    data = json.load(f)
+                    history.append({
+                        "video_id": data.get("video_id"),
+                        "title": data.get("title", "Unknown Title"),
+                        "source_url": data.get("source_url")
+                    })
+            except Exception:
+                continue
+    return history
+
+
+@app.delete("/history/{video_id}")
+def delete_history_item(video_id: str):
+    if not _VIDEO_ID_RE.match(video_id):
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    
+    json_path = AUDIO_CACHE_DIR / f"{video_id}.json"
+    wav_path = AUDIO_CACHE_DIR / f"{video_id}.wav"
+    
+    deleted = False
+    if json_path.exists():
+        json_path.unlink()
+        deleted = True
+    if wav_path.exists():
+        wav_path.unlink()
+        deleted = True
+        
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Song not found in history")
+        
+    return {"status": "success", "message": f"Deleted {video_id}"}
+
+
+@app.get("/suggest")
+def suggest(q: str):
+    """Fetch YouTube search suggestions from Google's public API."""
+    if not q or not q.strip():
+        return {"suggestions": []}
+    
+    url = f"http://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q={q}"
+    try:
+        r = resilient_session.get(url, timeout=5, headers=_HTTP_BROWSER_HEADERS)
+        r.raise_for_status()
+        data = r.json()
+        # data[1] contains the list of suggestions in the Firefox-style response
+        suggestions = data[1] if len(data) > 1 else []
+        return {"suggestions": suggestions}
+    except Exception as e:
+        print(f"DEBUG: Suggestion fetch failed: {e}")
+        return {"suggestions": []}
+
+
+def _clean_title(title: str) -> str:
+    """Aggressively clean YouTube title for lyrics search."""
+    # 1. Remove anything inside parentheses () or brackets []
+    cleaned = re.sub(r"[\(\[].*?[\)\]]", "", title)
+    # 2. Remove specific keywords (case-insensitive)
+    keywords = ["official", "video", "lyrics", "live", "cover", "קליפ רשמי", "מילים", "הופעה חיה", "קאבר"]
+    for kw in keywords:
+        cleaned = re.sub(r"(?i)" + re.escape(kw), "", cleaned)
+    # 3. Replace hyphens, pipes, and separators with spaces
+    cleaned = re.sub(r"[\-\|]", " ", cleaned)
+    # 4. Strip extra whitespace
+    cleaned = " ".join(cleaned.split()).strip()
+    return cleaned
+
+
+def _extract_english(title: str) -> str:
+    """Extract only Latin alphabet characters and spaces from title."""
+    english_only = re.sub(r"[^a-zA-Z\s]", "", title)
+    english_only = " ".join(english_only.split()).strip()
+    return english_only
+
+
+def _validate_lrclib_result(res: dict, video_duration: Optional[int], yt_title: str = "", yt_artist: str = "", yt_track: str = "") -> bool:
+    """
+    Validate a single LRCLIB result using a '100% Sure or Abort' approach:
+    1. Must have syncedLyrics.
+    2. Duration difference must be <= 15 seconds (if video_duration is available).
+    3. db_artist OR db_track must match yt_title or yt_artist/yt_track.
+       - db_artist and db_track must be at least 2 characters (skip if shorter).
+    Result is ONLY accepted if: duration check passes AND (artist_match OR track_match).
+    """
+    if not res.get("syncedLyrics"):
+        return False
+
+    db_artist = res.get('artistName', '') or ''
+    db_track = res.get('trackName', '') or ''
+
+    db_artist = db_artist.lower().strip()
+    db_track = db_track.lower().strip()
+
+    if len(db_artist) < 2 or len(db_track) < 2:
+        return False
+
+    yt_title_l = yt_title.lower()
+    yt_artist_l = yt_artist.lower()
+    yt_track_l = yt_track.lower()
+
+    duration_diff = 0
+    has_valid_duration = True
+    if video_duration is not None and res.get("duration") is not None:
+        duration_diff = abs(video_duration - res["duration"])
+        has_valid_duration = duration_diff <= 15
+
+    if not has_valid_duration:
+        return False
+
+    artist_match = db_artist and (db_artist in yt_title_l or db_artist in yt_artist_l)
+    track_match = db_track and (db_track in yt_title_l or db_track in yt_track_l)
+
+    return artist_match or track_match
+
+
+
+def _fetch_lyrics_from_lrclib(query: str, video_duration: Optional[int] = None, yt_title: str = "", yt_artist: str = "", yt_track: str = "") -> Optional[str]:
+    """Search LRCLIB API with a single query and return first validated synced lyrics."""
+    try:
+        # Skip garbage or too-short queries
+        if not query or len(query.strip()) < 3:
+            return None
+            
+        url = f"https://lrclib.net/api/search?q={query}"
+        response = resilient_session.get(url, timeout=10)
+        if response.status_code == 200:
+            results = response.json()
+            for res in results:
+                if _validate_lrclib_result(res, video_duration, yt_title, yt_artist, yt_track):
+                    return res["syncedLyrics"]
+    except Exception as e:
+        print(f"DEBUG: LRCLIB fetch failed: {e}")
+        pass
+    return None
+
+
+def _fetch_synced_lyrics(youtube_title: str, artist: Optional[str] = None, track: Optional[str] = None, video_duration: Optional[int] = None) -> Optional[str]:
+    """
+    Fetch synchronized lyrics from LRCLIB API using a multi-step fallback strategy:
+    1. Best Match (Metadata): Use {artist} {track} if available.
+    2. Clean Title Search: Search with aggressively cleaned YouTube title.
+    3. English/Transliteration Extraction: Extract Latin chars only and search.
+    4. Bidirectional Split Search: Split by '-' or '|', try part 2 then part 1.
+    Each search uses a 'Smart Metadata Cross-Reference' validation (duration + text overlap).
+    """
+    yt_artist = artist or ""
+    yt_track = track or ""
+    yt_title = youtube_title or ""
+
+    # Step 1: Metadata search
+    if yt_artist and yt_track:
+        query = f"{yt_artist} {yt_track}"
+        print(f"DEBUG: Lyrics step 1 - metadata search: '{query}'")
+        result = _fetch_lyrics_from_lrclib(query, video_duration, yt_title, yt_artist, yt_track)
+        if result:
+            return result
+
+    # Step 2: Clean title search
+    cleaned = _clean_title(yt_title)
+    if cleaned:
+        print(f"DEBUG: Lyrics step 2 - cleaned title search: '{cleaned}'")
+        result = _fetch_lyrics_from_lrclib(cleaned, video_duration, yt_title, yt_artist, yt_track)
+        if result:
+            return result
+
+    # Step 3: English/transliteration extraction
+    english_only = _extract_english(yt_title)
+    if english_only:
+        print(f"DEBUG: Lyrics step 3 - english extraction search: '{english_only}'")
+        result = _fetch_lyrics_from_lrclib(english_only, video_duration, yt_title, yt_artist, yt_track)
+        if result:
+            return result
+
+    # Step 4: Bidirectional split search
+    parts = re.split(r"[\-\|]", yt_title)
+    if len(parts) >= 2:
+        second_part = _clean_title(parts[1]) if len(parts) > 1 else None
+        if second_part:
+            print(f"DEBUG: Lyrics step 4a - split search (part 2): '{second_part}'")
+            result = _fetch_lyrics_from_lrclib(second_part, video_duration, yt_title, yt_artist, yt_track)
+            if result:
+                return result
+
+        first_part = _clean_title(parts[0]) if len(parts) > 0 else None
+        if first_part:
+            print(f"DEBUG: Lyrics step 4b - split search (part 1): '{first_part}'")
+            result = _fetch_lyrics_from_lrclib(first_part, video_duration, yt_title, yt_artist, yt_track)
+            if result:
+                return result
+
+    print(f"DEBUG: Lyrics fetch failed for title: '{yt_title}'")
+    return None
+
+
 @app.post("/analyze")
-def analyze_chords(payload: AnalyzeRequest):
+async def analyze_chords(payload: AnalyzeRequest, request: Request):
     raw_input = payload.search_or_url.strip()
     youtube_watch_url, video_id = resolve_input_to_youtube(raw_input)
+
+    # 1. Instant Load from Cache
+    AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_json = AUDIO_CACHE_DIR / f"{video_id}.json"
+    if cache_json.exists():
+        try:
+            with open(cache_json, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         wav_stem = tmp_path / "audio"
         wav_file = tmp_path / "audio.wav"
 
-        _download_audio(youtube_watch_url, wav_stem)
+        artist = None
+        track = None
+        video_duration = None
+        # Fetch title using Python API
+        try:
+            ydl_opts = {
+                "quiet": True,
+                "socket_timeout": 30,
+                "source_address": "0.0.0.0", # Force IPv4
+                "retries": 5,
+                "extractor_retries": 3,
+                "remote_components": ["ejs:github"],
+            }
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(youtube_watch_url, download=False)
+                title = info.get("title", "Unknown Title")
+                artist = info.get("artist")
+                track = info.get("track")
+                video_duration = info.get("duration")
+        except Exception as exc:
+            print(f"DEBUG: yt-dlp metadata fetch failed: {exc}")
+            title = "Unknown Title"
+
+        last_stderr = _download_audio(youtube_watch_url, wav_stem)
+        
+        # Directory Inspection
+        dir_contents = os.listdir(tmp_dir)
+        print(f"DEBUG: Temp directory contents: {dir_contents}")
+
         if not wav_file.exists():
-            # Some ffmpeg/yt-dlp setups may produce a non-wav extension despite flags.
             candidates = list(tmp_path.glob("audio.*"))
             if not candidates:
-                raise HTTPException(status_code=500, detail="Downloaded audio file not found")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Downloaded audio file not found in {tmp_dir}. contents: {dir_contents}. yt-dlp stderr: {last_stderr}"
+                )
             wav_file = candidates[0]
 
-        analyze_path = wav_file
-        AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cached = AUDIO_CACHE_DIR / f"{video_id}.wav"
-        shutil.copy2(wav_file, cached)
-        analyze_path = cached
+        # Cancellation checkpoint: after download.
+        if await request.is_disconnected():
+            try:
+                if wav_file.exists():
+                    wav_file.unlink()
+            except Exception:
+                pass
+            raise HTTPException(status_code=499, detail="Client disconnected during download")
+
+        # Cancellation checkpoint: right before expensive chord estimation.
+        if await request.is_disconnected():
+            try:
+                if wav_file.exists():
+                    wav_file.unlink()
+            except Exception:
+                pass
+            raise HTTPException(status_code=499, detail="Client disconnected before analysis")
 
         try:
-            chords = _estimate_chords(analyze_path)
+            chords = _estimate_chords(wav_file)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"librosa analysis failed: {exc}") from exc
+            print("--- CHORD ANALYSIS FAILED ---")
+            traceback.print_exc()
+            raise HTTPException(status_code=400, detail=str(exc))
 
-    return {
-        "source_url": raw_input,
-        "video_id": video_id,
-        "chords": chords,
-    }
+        if await request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client disconnected during analysis")
+
+        # Fetch synced lyrics
+        synced_lyrics = _fetch_synced_lyrics(title, artist=artist, track=track, video_duration=video_duration)
+
+        result = {
+            "title": title,
+            "source_url": raw_input,
+            "video_id": video_id,
+            "chords": chords,
+            "lyrics": synced_lyrics,
+        }
+
+        # Save to cache only after full analysis completes and client is still connected.
+        try:
+            cached_wav = AUDIO_CACHE_DIR / f"{video_id}.wav"
+            shutil.copy2(wav_file, cached_wav)
+            with open(cache_json, "w") as f:
+                json.dump(result, f)
+        except Exception:
+            pass
+
+    # 3. Cleanup old audio (keep only the 3 newest .wav files)
+    _cleanup_old_audio(3)
+
+    return result
 
 
 @app.get("/health")
