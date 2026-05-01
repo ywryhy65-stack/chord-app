@@ -201,6 +201,10 @@ def _ytsearch_first_video_id(query: str) -> str:
         "extractor_retries": 3,
         "remote_components": ["ejs:github"],
     }
+
+    # Use cookies if available (helps avoid YouTube blocks on Render)
+    if os.path.exists("cookies.txt"):
+        opts["cookiefile"] = "cookies.txt"
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch1:{q}", download=False)
@@ -464,6 +468,13 @@ def _download_audio(youtube_url: str, output_wav_path: Path) -> str:
         str(output_wav_path.with_suffix(".%(ext)s")),
         youtube_url,
     ]
+
+    # Use cookies if available (helps avoid YouTube blocks on Render)
+    if os.path.exists("cookies.txt"):
+        # Insert before the URL (last element)
+        cmd.insert(-1, "--cookies")
+        cmd.insert(-1, "cookies.txt")
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300) # 5 min limit for download
     except subprocess.TimeoutExpired as exc:
