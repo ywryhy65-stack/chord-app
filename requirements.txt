@@ -5,7 +5,7 @@ librosa
 numpy
 scipy
 requests
-yt-dlp
+yt-dlp>=2025.01.15
 spleeter
 python-multipart
 celery

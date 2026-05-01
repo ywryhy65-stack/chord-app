@@ -203,8 +203,16 @@ def _ytsearch_first_video_id(query: str) -> str:
     }
 
     # Use cookies if available (helps avoid YouTube blocks on Render)
-    if os.path.exists("cookies.txt"):
-        opts["cookiefile"] = "cookies.txt"
+    cookies_path = BASE_DIR / "cookies.txt"
+    if cookies_path.exists():
+        opts["cookiefile"] = str(cookies_path)
+    
+    # Add extra options to bypass bot detection
+    opts.update({
+        "nocheckcertificate": True,
+        "user_agent": _HTTP_BROWSER_HEADERS["User-Agent"],
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+    })
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch1:{q}", download=False)
@@ -470,10 +478,18 @@ def _download_audio(youtube_url: str, output_wav_path: Path) -> str:
     ]
 
     # Use cookies if available (helps avoid YouTube blocks on Render)
-    if os.path.exists("cookies.txt"):
+    cookies_path = BASE_DIR / "cookies.txt"
+    if cookies_path.exists():
         # Insert before the URL (last element)
         cmd.insert(-1, "--cookies")
-        cmd.insert(-1, "cookies.txt")
+        cmd.insert(-1, str(cookies_path))
+    
+    # Add User-Agent to match requests
+    cmd.extend([
+        "--user-agent", _HTTP_BROWSER_HEADERS["User-Agent"],
+        "--no-check-certificate",
+        "--extractor-args", "youtube:player-client=android,web",
+    ])
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300) # 5 min limit for download
