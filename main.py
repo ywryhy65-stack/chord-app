@@ -248,9 +248,11 @@ def _ytsearch_first_video_id(query: str) -> str:
             "source_address": "0.0.0.0",
             "retries": 3,
             "extractor_retries": 2,
-            "remote_components": ["ejs:github"],
         }
 
+        # TODO: IMPORTANT - Manually generate a fresh cookies.txt file from an active, 
+        # logged-in YouTube session and place it in the project root directory.
+        # The current cookies are likely expired or flagged.
         # Use cookies if available
         cookies_path = BASE_DIR / "cookies.txt"
         if cookies_path.exists():
@@ -259,9 +261,15 @@ def _ytsearch_first_video_id(query: str) -> str:
         opts.update({
             "nocheckcertificate": True,
             "user_agent": _HTTP_BROWSER_HEADERS["User-Agent"],
-            "extractor_args": {"youtube": {"player_client": client_list}},
+            "extractor_args": {
+                "youtube": {
+                    "player_client": client_list,
+                    "skip": ["dash", "hls"]
+                }
+            },
             "geo_bypass": True,
             "referer": "https://www.google.com/",
+            "prefer_free_formats": False,
         })
 
         try:
@@ -512,12 +520,14 @@ def _download_audio(youtube_url: str, output_wav_path: Path) -> str:
         "--force-ipv4",
         "--retries", "5",
         "--extractor-retries", "3",
-        "--remote-components", "ejs:github",
         "-o",
         str(output_wav_path.with_suffix(".%(ext)s")),
         youtube_url,
     ]
 
+    # TODO: IMPORTANT - Manually generate a fresh cookies.txt file from an active, 
+    # logged-in YouTube session and place it in the project root directory.
+    # The current cookies are likely expired or flagged.
     # Use cookies if available (helps avoid YouTube blocks on Render)
     cookies_path = BASE_DIR / "cookies.txt"
     if cookies_path.exists():
@@ -532,6 +542,9 @@ def _download_audio(youtube_url: str, output_wav_path: Path) -> str:
         "--extractor-args", "youtube:player-client=ios,web,android",
         "--geo-bypass",
         "--referer", "https://www.google.com/",
+        "--youtube-skip-dash-manifest",
+        "--youtube-skip-hls-manifest",
+        "--no-prefer-free-formats",
     ])
 
     try:
