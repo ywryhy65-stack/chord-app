@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import traceback
 import socket
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List
 from urllib.parse import parse_qs, urlparse
@@ -59,6 +61,24 @@ INDEX_FILE = BASE_DIR / "index.html"
 AUDIO_CACHE_DIR = BASE_DIR / "audio_cache"
 
 app = FastAPI(title="ChordSync Backend")
+
+@app.on_event("startup")
+async def startup_event():
+    # Log yt-dlp version
+    try:
+        import yt_dlp
+        print(f"INFO: yt-dlp version: {yt_dlp.version.__version__}")
+    except Exception as e:
+        print(f"WARNING: Could not determine yt-dlp version: {e}")
+
+    # Check cookies staleness
+    cookies_path = BASE_DIR / "cookies.txt"
+    if cookies_path.exists():
+        mtime = datetime.fromtimestamp(cookies_path.stat().st_mtime)
+        if datetime.now() - mtime > timedelta(days=1):
+            print(f"WARNING: cookies.txt is older than 24 hours (last modified: {mtime}). Consider updating it if you see 'Sign in' errors.")
+    else:
+        print("WARNING: cookies.txt not found. YouTube might block requests on Render.")
 
 _VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 _HTML_TITLE_RE = re.compile(r"<title[^>]*>([^<]+)</title>", re.IGNORECASE | re.DOTALL)
@@ -211,7 +231,9 @@ def _ytsearch_first_video_id(query: str) -> str:
     opts.update({
         "nocheckcertificate": True,
         "user_agent": _HTTP_BROWSER_HEADERS["User-Agent"],
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "extractor_args": {"youtube": {"player_client": ["ios", "web", "android"]}},
+        "geo_bypass": True,
+        "referer": "https://www.google.com/",
     })
     try:
         with YoutubeDL(opts) as ydl:
@@ -488,7 +510,9 @@ def _download_audio(youtube_url: str, output_wav_path: Path) -> str:
     cmd.extend([
         "--user-agent", _HTTP_BROWSER_HEADERS["User-Agent"],
         "--no-check-certificate",
-        "--extractor-args", "youtube:player-client=android,web",
+        "--extractor-args", "youtube:player-client=ios,web,android",
+        "--geo-bypass",
+        "--referer", "https://www.google.com/",
     ])
 
     try:

@@ -12,7 +12,8 @@ WORKDIR /app
 
 # Copy requirements.txt and install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -U yt-dlp
 
 # Copy the rest of the project files
 COPY . .
