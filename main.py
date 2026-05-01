@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Optional, List
 from urllib.parse import parse_qs, urlparse
 
+try:
+    from youtubesearchpython import VideosSearch
+except ImportError:
+    VideosSearch = None
+
 # Ensure Homebrew and common paths are in PATH for Apple Silicon/Intel Macs
 os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin"
 
@@ -210,67 +215,81 @@ def _ytsearch_first_video_id(query: str) -> str:
     q = (query or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Empty search query")
-    opts: dict = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "skip_download": True,
-        "socket_timeout": 30,
-        "source_address": "0.0.0.0", # Force IPv4
-        "retries": 5,
-        "extractor_retries": 3,
-        "remote_components": ["ejs:github"],
-    }
 
-    # Use cookies if available (helps avoid YouTube blocks on Render)
-    cookies_path = BASE_DIR / "cookies.txt"
-    if cookies_path.exists():
-        opts["cookiefile"] = str(cookies_path)
+    # Strategy 1: Try youtube-search-python (often more reliable for search on cloud IPs)
+    if VideosSearch:
+        try:
+            search = VideosSearch(q, limit=1)
+            result = search.result()
+            if result and result.get("result"):
+                vid = result["result"][0].get("id")
+                if vid and _VIDEO_ID_RE.match(vid):
+                    print(f"INFO: Resolved {q} to {vid} using youtube-search-python")
+                    return vid
+        except Exception as e:
+            print(f"DEBUG: youtube-search-python failed: {e}")
+
+    # Strategy 2: yt-dlp with multiple client attempts
+    clients_to_try = [
+        ["ios"],
+        ["android", "web"],
+        ["tv", "web"],
+        ["web_creator"]
+    ]
+
+    last_exc = None
+    for client_list in clients_to_try:
+        opts: dict = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "skip_download": True,
+            "socket_timeout": 30,
+            "source_address": "0.0.0.0",
+            "retries": 3,
+            "extractor_retries": 2,
+            "remote_components": ["ejs:github"],
+        }
+
+        # Use cookies if available
+        cookies_path = BASE_DIR / "cookies.txt"
+        if cookies_path.exists():
+            opts["cookiefile"] = str(cookies_path)
+
+        opts.update({
+            "nocheckcertificate": True,
+            "user_agent": _HTTP_BROWSER_HEADERS["User-Agent"],
+            "extractor_args": {"youtube": {"player_client": client_list}},
+            "geo_bypass": True,
+            "referer": "https://www.google.com/",
+        })
+
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"ytsearch1:{q}", download=False)
+                if info:
+                    entries = info.get("entries")
+                    if isinstance(entries, list) and entries:
+                        first = entries[0]
+                        if first and isinstance(first, dict):
+                            vid = first.get("id")
+                            if vid and _VIDEO_ID_RE.match(vid):
+                                return vid
+                    
+                    vid_top = info.get("id")
+                    if vid_top and _VIDEO_ID_RE.match(vid_top):
+                        return vid_top
+        except Exception as exc:
+            last_exc = exc
+            print(f"DEBUG: yt-dlp search with clients {client_list} failed: {exc}")
+            continue
+
+    status_code = 400
+    if last_exc and "timeout" in str(last_exc).lower():
+        status_code = 504
     
-    # Add extra options to bypass bot detection
-    opts.update({
-        "nocheckcertificate": True,
-        "user_agent": _HTTP_BROWSER_HEADERS["User-Agent"],
-        "extractor_args": {"youtube": {"player_client": ["ios", "web", "android"]}},
-        "geo_bypass": True,
-        "referer": "https://www.google.com/",
-    })
-    try:
-        with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch1:{q}", download=False)
-    except Exception as exc:
-        status_code = 400
-        if "timeout" in str(exc).lower():
-            status_code = 504
-        raise HTTPException(
-            status_code=status_code,
-            detail=f"YouTube search failed: {exc}",
-        ) from exc
-    if not info:
-        raise HTTPException(status_code=400, detail="No YouTube search results")
-
-    entries = info.get("entries")
-    if isinstance(entries, list):
-        for first in entries:
-            if first is None or not isinstance(first, dict):
-                continue
-            vid = first.get("id")
-            if isinstance(vid, str) and _VIDEO_ID_RE.match(vid):
-                return vid
-            url = first.get("url") or first.get("webpage_url")
-            if isinstance(url, str):
-                extracted = extract_youtube_video_id(url)
-                if extracted:
-                    return extracted
-
-    vid_top = info.get("id")
-    if isinstance(vid_top, str) and _VIDEO_ID_RE.match(vid_top):
-        return vid_top
-
-    raise HTTPException(
-        status_code=400,
-        detail="Could not resolve a YouTube video from search results",
-    )
+    error_detail = f"YouTube search failed after multiple attempts: {last_exc}"
+    raise HTTPException(status_code=status_code, detail=error_detail)
 
 
 def resolve_input_to_youtube(raw: str) -> tuple[str, str]:
